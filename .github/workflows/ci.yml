@@ -63,7 +63,7 @@ jobs:
       - name: Install the actual pinned ChatGPT-Web2API engine
         env:
           WEBCHAT_ENGINE_BOOTSTRAP_PYTHON: python3
-        run: ./engine/install.sh
+        run: bash engine/install.sh
 
       - name: Verify installed engine identity and imports
         run: |

@@ -152,12 +152,13 @@ export class ResourceCatalog {
     );
     if (known) return { ...known };
 
-    const idFromUrl = projectIdFromUrl(value);
-    const directMatch = value.match(PROJECT_ID)?.[0] || null;
-    const id = PROJECT_ID_EXACT.test(value) ? value : idFromUrl || directMatch;
-    if (!id || !PROJECT_ID_EXACT.test(id)) return null;
-    const found = this.state.projects.find((project) => project.id === id);
-    return found ? { ...found } : normalizeProject({ id, url: refUrl }, { source: "direct" });
+    // A Project URL may contain a short_url with a human slug. Without a catalog
+    // match we cannot safely infer the true gizmo id from that URL. Force the
+    // caller to live-sync and resolve it. Only explicit g-p-* ids are trusted.
+    if (refUrl) return null;
+    if (!PROJECT_ID_EXACT.test(value)) return null;
+    const found = this.state.projects.find((project) => project.id === value);
+    return found ? { ...found } : normalizeProject({ id: value }, { source: "direct" });
   }
 
   async importProjects(input, { source = "import" } = {}) {

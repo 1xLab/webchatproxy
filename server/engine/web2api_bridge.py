@@ -329,7 +329,12 @@ class EngineBridge:
         return web.json_response(result)
 
     async def start(self) -> None:
-        await self.ensure_chrome()
+        # Establish the CDP driver during bridge startup. Previously startup only
+        # launched Chrome, while /health merely observed self.driver. The Node
+        # gateway waits for driver_connected before exercising models/projects,
+        # so no request ever called ensure_driver() and readiness was permanently
+        # stuck at auth_required despite a healthy Chrome/CDP session.
+        await self.ensure_driver()
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
         await web.TCPSite(self.runner, self.host, self.port).start()

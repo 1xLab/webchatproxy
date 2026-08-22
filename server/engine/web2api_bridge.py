@@ -8,7 +8,6 @@ for direct external consumption and must stay bound to loopback.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import signal
@@ -31,10 +30,17 @@ from chatgpt_web2api.mcp_server import (
 from chatgpt_web2api.tab_registry import TabRegistry
 
 LOG = logging.getLogger("webchatproxy.web2api_bridge")
+ENGINE_COMMIT = "497527dceabfa3f95961e23c291e618c5570f1ac"
 
 
 def env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_bool_value(raw: str | None, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
@@ -69,6 +75,25 @@ def text_content(content: Any) -> str:
     return str(content)
 
 
+@web.middleware
+async def error_middleware(request: web.Request, handler):
+    try:
+        return await handler(request)
+    except web.HTTPException:
+        raise
+    except Exception as exc:
+        message = str(exc)
+        lower = message.lower()
+        code = (
+            "ENGINE_AUTH_REQUIRED"
+            if "access token" in lower or "logged in" in lower or "auth" in lower
+            else "ENGINE_UPSTREAM_ERROR"
+        )
+        status = 503 if code == "ENGINE_AUTH_REQUIRED" else 502
+        LOG.exception("engine request failed: %s %s", request.method, request.path)
+        return web.json_response({"error": message, "code": code}, status=status)
+
+
 class EngineBridge:
     def __init__(self) -> None:
         self.host = os.environ.get("WEBCHAT_ENGINE_HOST", "127.0.0.1")
@@ -96,13 +121,17 @@ class EngineBridge:
 
         self.breakers = BreakerRegistry()
         self.chrome: ChromeProcess | None = None
+        self.chrome_monitor_started = False
         self.driver: CDPDriver | None = None
         self.driver_lock = asyncio.Lock()
         self.mutation_lock = asyncio.Lock()
         self.runner: web.AppRunner | None = None
         self.last_error: str | None = None
 
-        self.app = web.Application(client_max_size=2 * 1024 * 1024)
+        self.app = web.Application(
+            client_max_size=2 * 1024 * 1024,
+            middlewares=[error_middleware],
+        )
         self.app.router.add_get("/health", self.health)
         self.app.router.add_get("/v1/models", self.models)
         self.app.router.add_get("/v1/projects", self.projects)
@@ -115,7 +144,9 @@ class EngineBridge:
         if self.chrome is None:
             self.chrome = ChromeProcess(self.config, breakers=self.breakers)
         await self.chrome.ensure_running()
-        await self.chrome.start_monitor()
+        if not self.chrome_monitor_started:
+            await self.chrome.start_monitor()
+            self.chrome_monitor_started = True
 
     async def ensure_driver(self) -> CDPDriver:
         if self.driver is not None and bool(self.driver.is_connected):
@@ -167,6 +198,7 @@ class EngineBridge:
             {
                 "status": status,
                 "engine": "chatgpt-web2api",
+                "engine_commit": ENGINE_COMMIT,
                 "chrome_running": chrome_running,
                 "driver_connected": connected,
                 "cdp_port": self.config.chrome.cdp_port,
@@ -177,13 +209,11 @@ class EngineBridge:
 
     async def models(self, _request: web.Request) -> web.Response:
         driver = await self.ensure_driver()
-        result = await do_list_models(driver)
-        return web.json_response(result)
+        return web.json_response(await do_list_models(driver))
 
     async def projects(self, _request: web.Request) -> web.Response:
         driver = await self.ensure_driver()
-        result = await do_list_projects(driver)
-        return web.json_response(result)
+        return web.json_response(await do_list_projects(driver))
 
     async def conversations(self, request: web.Request) -> web.Response:
         driver = await self.ensure_driver()
@@ -196,8 +226,6 @@ class EngineBridge:
             items = await driver.get_conversations(offset=offset, limit=limit)
             return web.json_response({"conversations": items, "offset": offset, "limit": limit})
 
-        # ChatGPT-Web2API already normalizes gizmo_id on conversation records.
-        # Scan pages until the requested project page is filled or the backend ends.
         matched: list[dict[str, Any]] = []
         scan_offset = 0
         batch = 100
@@ -241,8 +269,7 @@ class EngineBridge:
     async def project_files(self, request: web.Request) -> web.Response:
         driver = await self.ensure_driver()
         project_id = request.match_info["project_id"].strip()
-        result = await do_list_project_files(driver, {"project_id": project_id})
-        return web.json_response(result)
+        return web.json_response(await do_list_project_files(driver, {"project_id": project_id}))
 
     async def chat(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -323,34 +350,12 @@ class EngineBridge:
                 pass
 
 
-def env_bool_value(raw: str | None, default: bool) -> bool:
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-@web.middleware
-async def error_middleware(request: web.Request, handler):
-    try:
-        return await handler(request)
-    except web.HTTPException:
-        raise
-    except Exception as exc:
-        message = str(exc)
-        lower = message.lower()
-        code = "ENGINE_AUTH_REQUIRED" if "access token" in lower or "logged in" in lower or "auth" in lower else "ENGINE_UPSTREAM_ERROR"
-        status = 503 if code == "ENGINE_AUTH_REQUIRED" else 502
-        LOG.exception("engine request failed: %s %s", request.method, request.path)
-        return web.json_response({"error": message, "code": code}, status=status)
-
-
 async def amain() -> None:
     logging.basicConfig(
         level=getattr(logging, os.environ.get("WEBCHAT_ENGINE_LOG_LEVEL", "INFO").upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     bridge = EngineBridge()
-    bridge.app.middlewares.append(error_middleware)
     await bridge.start()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

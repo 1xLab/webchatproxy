@@ -5,11 +5,10 @@ on:
     branches:
       - main
       - 'refactor/**'
+      - 'feature/**'
       - 'feat/**'
       - 'fix/**'
   pull_request:
-    branches:
-      - main
 
 jobs:
   gateway:
@@ -50,10 +49,11 @@ jobs:
           set -e
           test "$CODE" = "78"
           grep -q 'must not live under public_html' /tmp/webroot-boundary.log
-      - name: Standalone HTTP/auth contract
+      - name: Standalone HTTP/auth and control-plane contract
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/webchatproxy-ci
           WEBCHAT_DISABLE_BROWSER_START=1 \
           WEBCHAT_API_TOKEN=ci-secret \
           WEBCHAT_PORT=3218 \
@@ -68,7 +68,23 @@ jobs:
           grep -q '"service":"webchat-gateway"' /tmp/health.json
           CODE=$(curl -sS -o /tmp/unauthorized.json -w '%{http_code}' http://127.0.0.1:3218/v1/debug/config)
           test "$CODE" = "401"
-          curl -fsS -H 'Authorization: Bearer ci-secret' http://127.0.0.1:3218/v1/debug/config | grep -q '"browser_start_disabled":true'
-          curl -fsS -H 'Authorization: Bearer ci-secret' http://127.0.0.1:3218/v1/debug/runtime | grep -q '"service":"webchat-gateway"'
-          READY=$(curl -sS -H 'Authorization: Bearer ci-secret' -o /tmp/ready.json -w '%{http_code}' http://127.0.0.1:3218/ready)
+          AUTH=(-H 'Authorization: Bearer ci-secret')
+          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/debug/config | grep -q '"browser_start_disabled":true'
+          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/debug/runtime | grep -q '"service":"webchat-gateway"'
+          READY=$(curl -sS "${AUTH[@]}" -o /tmp/ready.json -w '%{http_code}' http://127.0.0.1:3218/ready)
           test "$READY" = "503"
+
+          curl -fsS "${AUTH[@]}" -H 'Content-Type: application/json' \
+            -d '{"projects":{"CI Project":{"id":"g-p-ci123","aliases":["ci"]}}}' \
+            http://127.0.0.1:3218/v1/projects/import >/tmp/project-import.json
+          grep -q '"imported":1' /tmp/project-import.json
+          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/projects >/tmp/projects.json
+          grep -q 'g-p-ci123' /tmp/projects.json
+
+          printf 'ci attachment\n' >/tmp/ci-attachment.txt
+          curl -fsS "${AUTH[@]}" -H 'Content-Type: text/plain' -H 'X-Filename: ci-attachment.txt' \
+            --data-binary @/tmp/ci-attachment.txt http://127.0.0.1:3218/v1/files >/tmp/file.json
+          FILE_ID=$(node -e 'const x=require("fs").readFileSync("/tmp/file.json","utf8"); process.stdout.write(JSON.parse(x).file.id)')
+          test -n "$FILE_ID"
+          curl -fsS "${AUTH[@]}" "http://127.0.0.1:3218/v1/files/$FILE_ID" | grep -q 'ci-attachment.txt'
+          curl -fsS -X DELETE "${AUTH[@]}" "http://127.0.0.1:3218/v1/files/$FILE_ID" | grep -q '"deleted":true'

@@ -144,7 +144,8 @@ export class Web2ApiEngine {
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    throw engineError(`engine failed to start at ${this.baseUrl}`, "ENGINE_UNAVAILABLE", null, this.lastHealth);
+    this.autoStart = false;
+    throw engineError(`engine failed to start at ${this.baseUrl}; engine autostart disabled until service restart`, "ENGINE_UNAVAILABLE", null, this.lastHealth);
   }
 
   snapshot() {
@@ -168,6 +169,24 @@ export class Web2ApiEngine {
     await this.start();
     const payload = await this.#raw("/v1/projects");
     return Array.isArray(payload?.projects) ? payload.projects : [];
+  }
+
+  async createProject(input = {}) {
+    await this.start();
+    return this.#raw("/v1/projects", { method: "POST", body: input });
+  }
+
+  async deleteProject(projectId) {
+    await this.start();
+    return this.#raw(`/v1/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+  }
+
+  async updateProjectInstructions(projectId, instructions) {
+    await this.start();
+    return this.#raw(`/v1/projects/${encodeURIComponent(projectId)}/instructions`, {
+      method: "PATCH",
+      body: { instructions },
+    });
   }
 
   async listConversations({ projectId = null, all = false, offset = 0, limit = 50 } = {}) {
@@ -195,11 +214,94 @@ export class Web2ApiEngine {
     return this.#raw(`/v1/conversations/${encodeURIComponent(conversationId)}?${params}`);
   }
 
+  async archiveConversation(id, archive = true) {
+    await this.start();
+    return this.#raw(`/v1/conversations/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+      body: { archive: archive !== false },
+    });
+  }
+
+  async deleteConversation(id) {
+    await this.start();
+    return this.#raw(`/v1/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async listMemories() {
+    await this.start();
+    return this.#raw("/v1/memories");
+  }
+
+  async createMemory(content) {
+    await this.start();
+    return this.#raw("/v1/memories", { method: "POST", body: { content } });
+  }
+
+  async deleteMemory(id) {
+    await this.start();
+    return this.#raw(`/v1/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async listGpts() {
+    await this.start();
+    return this.#raw("/v1/gpts");
+  }
+
+  async chatWithGpt(gptId, message) {
+    await this.start();
+    return this.#raw(`/v1/gpts/${encodeURIComponent(gptId)}/chat`, {
+      method: "POST",
+      body: { message },
+      timeout: 210_000,
+    });
+  }
+
   async listProjectFiles(projectId) {
     const id = String(projectId || "").trim();
     if (!/^g-p-[A-Za-z0-9_-]+$/.test(id)) throw engineError("invalid project id", "INVALID_PROJECT_ID");
     await this.start();
     return this.#raw(`/v1/projects/${encodeURIComponent(id)}/files`);
+  }
+
+  async streamChat(body, res, { timeout = 210_000 } = {}) {
+    await this.start();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(5_000, Number(timeout) || 210_000));
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, stream: true }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let payload;
+        try { payload = JSON.parse(text); } catch { payload = { error: text }; }
+        throw normalizeErrorPayload(payload, response.status);
+      }
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      const reader = response.body.getReader();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) res.write(Buffer.from(value));
+        }
+      } finally {
+        res.end();
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") throw engineError("engine stream timed out", "ENGINE_TIMEOUT");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async ask(messages, {
@@ -248,6 +350,7 @@ export class Web2ApiEngine {
     await this.close();
     this.child = null;
     this.started = false;
+    this.autoStart = this.env.WEBCHAT_ENGINE_AUTOSTART !== "0";
     return this.start();
   }
 

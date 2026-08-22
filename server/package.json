@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node bootstrap.mjs",
     "doctor": "node doctor.mjs",
+    "doctor:control": "node doctor.mjs --control",
     "doctor:live": "node doctor.mjs --live",
     "doctor:contract": "node doctor.mjs --contract",
     "catalog": "node catalog.mjs",

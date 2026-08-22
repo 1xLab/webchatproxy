@@ -1,64 +1,67 @@
 # webchatproxy
 
-Standalone HTTP proxy for automating an authenticated ChatGPT Web session through Playwright.
+Standalone API proxy for consuming an authenticated ChatGPT Web account programmatically.
 
-`webchatproxy` is an independent product. It does not depend on Laravel, PHP, `webagent`, `ws_com_ia`, a browser extension, or the OpenAI API.
+`webchatproxy` is an independent product. It has no frontend and does not depend on Laravel, PHP, `webagent`, `ws_com_ia`, a browser extension or the OpenAI API.
 
 ## Architecture
 
 ```text
-HTTP clients
+HTTP / SDK clients
     |
     v
 webchatproxy API :3210
     |
     +--> ResourceCatalog ----> runtime/catalog/projects.json
-    +--> ChatGptControl -----> authenticated backend GET reads
     +--> FileStore ----------> runtime/uploads/
+    +--> JobManager ---------> queue / persistence / idempotency
     |
     v
-JobManager
+Web2ApiEngine
     |
     v
-BrowserBackend
+internal loopback bridge :3211
     |
     v
-Playwright + persistent browser profile
+ChatGPT-Web2API (pinned MIT dependency)
+    |
+    v
+Chrome/CDP + persistent browser-profile
     |
     v
 chatgpt.com
 ```
 
-The control plane intentionally uses two strategies:
+The normal runtime has one browser owner: the pinned `ChatGPT-Web2API` engine. The removed custom `chatgpt-control.mjs` implementation is not used as a fallback.
 
-- project/history/model-style reads use authenticated ChatGPT Web backend GET requests executed inside the logged-in browser context;
-- chat sends and document attachments use the real ChatGPT Web UI through Playwright.
-
-This avoids expensive sidebar scraping for discovery while leaving anti-bot protected write flows to the real browser.
-
-The default bind address is `127.0.0.1:3210`.
+The public API binds to `127.0.0.1:3210` by default. The Python engine bridge is internal and loopback-only.
 
 ## Requirements
 
 - Node.js 20+
-- Playwright/Chromium
-- a persistent ChatGPT Web browser profile
-- Xvfb when running headed Chromium on a server without a graphical display
+- Python 3.11+
+- Google Chrome or Chromium supported by the upstream engine
+- a persistent authenticated ChatGPT Web browser profile
+- Xvfb for headed Chrome on servers without a graphical display
+
+The selected engine is pinned in `server/requirements-engine.txt` to a reviewed upstream commit.
 
 ## Quick start
 
 ```bash
 cd server
 npm ci
-./start.sh browser-install
+./start.sh engine-install
 ./start.sh browser-auth
 ./start.sh start
 ./start.sh doctor-live
 ```
 
+`./start.sh start` also installs the pinned engine automatically when `.venv-engine` is missing, provided Python 3.11+ is available.
+
 ## Projects and old chats
 
-Projects can be discovered live from the authenticated account or imported by an administrator. Imported aliases make API clients independent from ChatGPT display names.
+Projects can be discovered from the authenticated ChatGPT account or imported by an administrator. Imported aliases keep API clients independent from ChatGPT display names.
 
 Example `projects.json`:
 
@@ -102,42 +105,49 @@ GET /v1/projects/{project-or-alias}/conversations
 GET /v1/projects/{project-or-alias}/files
 ```
 
-## Message attachments
+## Chat API
 
-Binary files are staged locally before a chat job. The upload endpoint accepts the raw file body, not base64.
+OpenAI-style synchronous request:
+
+```bash
+curl -X POST http://127.0.0.1:3210/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "auto",
+    "project": "auditor",
+    "messages": [{"role":"user","content":"Responda apenas: API_OK"}]
+  }'
+```
+
+Continue an existing ChatGPT conversation:
+
+```json
+{
+  "model": "auto",
+  "conversation_id": "existing-chat-id",
+  "messages": [
+    {"role": "user", "content": "Continue a análise."}
+  ],
+  "new_conversation": false
+}
+```
+
+`GET /v1/models` returns the model catalog read from the authenticated ChatGPT account through the engine.
+
+## File staging
+
+`POST /v1/files` accepts a raw binary body and stores it under `runtime/uploads/` with size, MIME type and SHA-256 metadata.
 
 ```bash
 curl -X POST http://127.0.0.1:3210/v1/files \
-  -H 'Authorization: Bearer ...' \
   -H 'Content-Type: application/pdf' \
   -H 'X-Filename: evidence.pdf' \
   --data-binary @evidence.pdf
 ```
 
-The response returns an ID such as `upl_<uuid>`. Use that ID in a job or chat completion:
+Important current boundary: the pinned ChatGPT-Web2API engine does not expose a safe per-message attachment operation. Therefore staging works, but using an `attachments` array in a chat request returns HTTP 501. The proxy fails closed rather than sending a prompt without the expected document.
 
-```json
-{
-  "model": "chatgpt-web",
-  "project": "auditor",
-  "messages": [{"role": "user", "content": "Analise o documento."}],
-  "attachments": ["upl_..."],
-  "new_conversation": true
-}
-```
-
-To continue an old chat instead:
-
-```json
-{
-  "model": "chatgpt-web",
-  "conversation_id": "existing-chat-id",
-  "messages": [{"role": "user", "content": "Continue a análise."}],
-  "new_conversation": false
-}
-```
-
-Staged files are hashed with SHA-256 and stored under `runtime/uploads/`. They are not committed to Git. This feature attaches files to a message; persistent Project source-file management is a separate operation and is not conflated with message attachments.
+Persistent Project knowledge-file upload/update/delete is also not claimed as implemented. `GET /v1/projects/{project}/files` reads Project file metadata.
 
 ## API
 
@@ -164,13 +174,14 @@ DELETE /v1/jobs/{id}
 POST   /v1/chat/completions
 ```
 
-Diagnostic endpoints are documented in `docs/DEBUG_CONTRACT.md`. The extended control-plane design is documented in `docs/CONTROL_PLANE.md`.
+Diagnostic endpoints remain under `/v1/debug/*`. Browser-DOM and screenshot debug calls intentionally return 501 because the upstream engine owns Chrome; engine diagnostics are exposed instead.
 
 ## Local state
 
 Never commit:
 
 ```text
+server/.venv-engine/
 server/browser-profile/
 server/runtime/
 ```
@@ -185,9 +196,24 @@ WEBCHAT_DEPLOY_USER=agent \
 ./deploy.sh all
 ```
 
-By default, `server/` is synchronized to `/home/$WEBCHAT_DEPLOY_USER/server/`. Use `WEBCHAT_DEPLOY_HOME` only when the existing service home differs.
+By default, `server/` is synchronized to `/home/$WEBCHAT_DEPLOY_USER/server/`. `browser-profile/` and `runtime/` are excluded from rsync so deploys preserve authentication and operational state.
 
-`browser-profile/` and `runtime/` are excluded from rsync, so deploys preserve the authenticated browser session and operational state already present on the server.
+Before restarting production after this engine migration, verify Python 3.11+ and install the engine:
+
+```bash
+cd /home/agent/server
+./start.sh engine-install
+npm run check
+npm test
+```
+
+Then restart the existing gateway service and validate:
+
+```bash
+curl -sS http://127.0.0.1:3210/health
+curl -sS http://127.0.0.1:3210/ready
+npm run doctor:control
+```
 
 ## Development
 
@@ -198,4 +224,4 @@ npm test
 npm run doctor:contract
 ```
 
-CI executes the standalone proxy contract on every push to development branches and on every pull request.
+CI validates that the custom ChatGPT backend implementation remains removed and that the public Node API can operate independently from any web application.

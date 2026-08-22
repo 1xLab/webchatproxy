@@ -1,6 +1,6 @@
 {
   "name": "webchatproxy",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,7 +13,8 @@
     "doctor:live": "node doctor.mjs --live",
     "doctor:contract": "node doctor.mjs --contract",
     "catalog": "node catalog.mjs",
-    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-backend.mjs && node --check browser-auth.mjs && node --check doctor.mjs && node --check catalog.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/diagnostics.mjs && node --check lib/chatgpt-control.mjs && node --check lib/resource-catalog.mjs && node --check lib/file-store.mjs",
+    "engine:install": "bash engine/install.sh",
+    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-backend.mjs && node --check browser-auth.mjs && node --check doctor.mjs && node --check catalog.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/diagnostics.mjs && node --check lib/web2api-engine.mjs && node --check lib/resource-catalog.mjs && node --check lib/file-store.mjs && python3 -m py_compile engine/web2api_bridge.py",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {

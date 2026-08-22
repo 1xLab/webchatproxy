@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { ResourceCatalog, normalizeProject, projectUrlFrom } from "../lib/resource-catalog.mjs";
 
-test("imports project map and resolves aliases, ids and URLs", async (t) => {
+test("imports project map and resolves aliases, ids and known URLs", async (t) => {
   const runtimeDir = await mkdtemp(join(tmpdir(), "webchat-catalog-"));
   t.after(() => rm(runtimeDir, { recursive: true, force: true }));
   const catalog = await new ResourceCatalog({ runtimeDir }).init();
@@ -27,9 +27,10 @@ test("imports project map and resolves aliases, ids and URLs", async (t) => {
   assert.equal(catalog.resolveProject("audit").id, "g-p-auditor456");
   assert.equal(catalog.resolveProject("g-p-auditor456").name, "Auditor Project");
   assert.equal(catalog.resolveProject("https://chatgpt.com/g/g-p-auditor456-auditor-project/project").id, "g-p-auditor456");
+  assert.equal(catalog.resolveProject("https://chatgpt.com/g/g-p-unknown-human-slug/project"), null);
 });
 
-test("live sync merges metadata without losing admin aliases", async (t) => {
+test("live sync accepts nested sidebar envelopes without losing admin aliases", async (t) => {
   const runtimeDir = await mkdtemp(join(tmpdir(), "webchat-catalog-"));
   t.after(() => rm(runtimeDir, { recursive: true, force: true }));
   const catalog = await new ResourceCatalog({ runtimeDir }).init();
@@ -37,11 +38,13 @@ test("live sync merges metadata without losing admin aliases", async (t) => {
 
   await catalog.syncProjects([{
     gizmo: {
-      id: "g-p-alpha123",
-      short_url: "g-p-alpha123-alpha",
-      display: { name: "Alpha Live" },
-      memory_scope: "project_v2",
-      files: [{ id: "file-1", name: "source.pdf" }],
+      gizmo: {
+        id: "g-p-alpha123",
+        short_url: "g-p-alpha123-alpha",
+        display: { name: "Alpha Live" },
+        memory_scope: "project_v2"
+      },
+      files: [{ id: "file-1", name: "source.pdf" }]
     },
   }]);
 

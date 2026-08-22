@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const PROJECT_ID = /\bg-p-[A-Za-z0-9_-]+\b/;
+const PROJECT_ID_EXACT = /^g-p-[A-Za-z0-9_-]+$/;
 const now = () => new Date().toISOString();
 
 function uniqueStrings(values = []) {
@@ -18,14 +19,22 @@ function projectIdFromUrl(value = "") {
   }
 }
 
+function normalizedUrl(value = "") {
+  try {
+    const url = new URL(String(value));
+    if (url.protocol !== "https:" || !["chatgpt.com", "www.chatgpt.com"].includes(url.hostname)) return null;
+    url.hostname = "chatgpt.com";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
 export function projectUrlFrom({ id, short_url: shortUrl, url } = {}) {
   if (url) {
-    try {
-      const parsed = new URL(String(url));
-      if (parsed.protocol === "https:" && ["chatgpt.com", "www.chatgpt.com"].includes(parsed.hostname)) {
-        return parsed.toString();
-      }
-    } catch {}
+    const normalized = normalizedUrl(url);
+    if (normalized) return normalized;
   }
   if (shortUrl) return `https://chatgpt.com/g/${String(shortUrl).replace(/^\/+|\/+$/g, "")}/project`;
   if (id) return `https://chatgpt.com/g/${id}/project`;
@@ -42,7 +51,7 @@ export function normalizeProject(entry = {}, { key = null, source = "unknown", o
   const id = String(
     entry.id || entry.project_id || entry.gizmo_id || nested.id || nested.project_id || projectIdFromUrl(url) || "",
   ).trim();
-  if (!PROJECT_ID.test(id)) throw new Error(`invalid ChatGPT project id: ${id || "missing"}`);
+  if (!PROJECT_ID_EXACT.test(id)) throw new Error(`invalid ChatGPT project id: ${id || "missing"}`);
 
   const name = String(
     entry.name || entry.display_name || nested.display?.name || nested.name || key || id,
@@ -132,19 +141,23 @@ export class ResourceCatalog {
       : ref;
     const value = String(candidate || "").trim();
     if (!value) return null;
-    const idFromUrl = projectIdFromUrl(value);
-    const id = PROJECT_ID.test(value) ? value.match(PROJECT_ID)?.[0] : idFromUrl;
-    if (id) {
-      const found = this.state.projects.find((project) => project.id === id);
-      return found ? { ...found } : normalizeProject({ id, url: /^https:\/\//i.test(value) ? value : null }, { source: "direct" });
-    }
+
     const needle = value.toLocaleLowerCase();
-    const found = this.state.projects.find((project) =>
-      String(project.name || "").toLocaleLowerCase() === needle
+    const refUrl = normalizedUrl(value);
+    const known = this.state.projects.find((project) =>
+      (refUrl && normalizedUrl(project.url) === refUrl)
+      || String(project.name || "").toLocaleLowerCase() === needle
       || (project.aliases || []).some((alias) => String(alias).toLocaleLowerCase() === needle)
       || String(project.short_url || "").toLocaleLowerCase() === needle,
     );
-    return found ? { ...found } : null;
+    if (known) return { ...known };
+
+    const idFromUrl = projectIdFromUrl(value);
+    const directMatch = value.match(PROJECT_ID)?.[0] || null;
+    const id = PROJECT_ID_EXACT.test(value) ? value : idFromUrl || directMatch;
+    if (!id || !PROJECT_ID_EXACT.test(id)) return null;
+    const found = this.state.projects.find((project) => project.id === id);
+    return found ? { ...found } : normalizeProject({ id, url: refUrl }, { source: "direct" });
   }
 
   async importProjects(input, { source = "import" } = {}) {

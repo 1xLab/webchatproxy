@@ -15,6 +15,7 @@ Environment=WEBCHAT_MCP_HOST=127.0.0.1
 Environment=WEBCHAT_MCP_PORT=8090
 Environment=W2A_ENABLE_WRITE=0
 Environment=W2A_ENABLE_DESTRUCTIVE=0
+EnvironmentFile=-/home/agent/webchatproxy/runtime/mcp.env
 ExecStart=/home/agent/webchatproxy/.venv-engine/bin/python /home/agent/webchatproxy/engine/mcp_proxy.py --transport sse --host 127.0.0.1 --port 8090
 Restart=on-failure
 RestartSec=3

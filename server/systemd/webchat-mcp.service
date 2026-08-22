@@ -1,0 +1,25 @@
+[Unit]
+Description=WebChatProxy MCP Adapter
+After=network-online.target webchat-gateway.service
+Wants=network-online.target
+Requires=webchat-gateway.service
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/webchatproxy
+Environment=HOME=/home/agent
+Environment=WEBCHAT_ENGINE_URL=http://127.0.0.1:3211
+Environment=WEBCHAT_MCP_HOST=127.0.0.1
+Environment=WEBCHAT_MCP_PORT=8090
+Environment=W2A_ENABLE_WRITE=0
+Environment=W2A_ENABLE_DESTRUCTIVE=0
+ExecStart=/home/agent/webchatproxy/.venv-engine/bin/python /home/agent/webchatproxy/engine/mcp_proxy.py --transport sse --host 127.0.0.1 --port 8090
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

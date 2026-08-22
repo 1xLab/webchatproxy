@@ -7,6 +7,7 @@ const PORT = Number(process.env.WEBCHAT_PORT || process.env.PORT || 3210);
 const BASE_URL = process.env.WEBCHAT_GATEWAY_URL || `http://127.0.0.1:${PORT}`;
 const TOKEN = process.env.WEBCHAT_API_TOKEN || "";
 const LIVE = process.env.WEBCHAT_DOCTOR_LIVE === "1" || process.argv.includes("--live");
+const CONTROL = LIVE || process.env.WEBCHAT_DOCTOR_CONTROL === "1" || process.argv.includes("--control");
 const CONTRACT_ONLY = process.argv.includes("--contract");
 const RUNTIME_DIR = process.env.WEBCHAT_RUNTIME_DIR || join(__dirname, "runtime");
 
@@ -17,6 +18,7 @@ if (CONTRACT_ONLY) {
     gateway_url: BASE_URL,
     default_port: PORT,
     live_smoke: LIVE,
+    control_smoke: CONTROL,
   }, null, 2));
   process.exit(0);
 }
@@ -58,8 +60,10 @@ const report = {
   timestamp: new Date().toISOString(),
   gateway_url: BASE_URL,
   live_smoke: LIVE,
+  control_smoke: CONTROL,
   health: null,
   doctor: null,
+  control: null,
   smoke: null,
   artifacts: null,
   error: null,
@@ -75,9 +79,24 @@ try {
     throw new Error(report.doctor.body?.status || `doctor_failed_${report.doctor.status}`);
   }
 
-  if (LIVE && report.doctor.body?.browser?.authenticated !== true) {
+  if ((LIVE || CONTROL) && report.doctor.body?.browser?.authenticated !== true) {
     report.artifacts = await createBundle();
     throw new Error("authentication_required");
+  }
+
+  if (CONTROL) {
+    const projects = await request("/v1/projects?live=1&sync=0&all=0");
+    const conversations = await request("/v1/conversations?limit=1");
+    report.control = {
+      projects,
+      conversations,
+      projects_contract: projects.ok && Array.isArray(projects.body?.projects),
+      conversations_contract: conversations.ok && Array.isArray(conversations.body?.items),
+    };
+    if (!report.control.projects_contract || !report.control.conversations_contract) {
+      report.artifacts = await createBundle();
+      throw new Error("control_plane_validation_failed");
+    }
   }
 
   if (LIVE) {

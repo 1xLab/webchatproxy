@@ -45,8 +45,8 @@ jobs:
       - name: Install Node dependencies reproducibly
         run: npm ci
 
-      - name: Block critical Node dependency vulnerabilities
-        run: npm audit --omit=dev --audit-level=critical
+      - name: Block high severity Node dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Syntax and static checks
         run: npm run check

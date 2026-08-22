@@ -1,0 +1,24 @@
+{
+  "name": "webchat-gateway",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bootstrap.mjs",
+    "start:legacy": "node server.mjs",
+    "start:browser-legacy": "REMOTE_IA_BACKEND=browser node server.mjs",
+    "doctor": "node doctor.mjs",
+    "doctor:live": "node doctor.mjs --live",
+    "doctor:contract": "node doctor.mjs --contract",
+    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-backend.mjs && node --check browser-auth.mjs && node --check doctor.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/diagnostics.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@kudoai/chatgpt.js": "^4.15.6",
+    "playwright": "^1.61.1",
+    "ws": "^8.18.0"
+  }
+}

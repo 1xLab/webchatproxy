@@ -1,0 +1,28 @@
+[Unit]
+Description=WebChat Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/server
+Environment=HOME=/home/agent
+Environment=WEBCHAT_NOFILE=65535
+Environment=WEBCHAT_PROFILE_DIR=/home/agent/server/browser-profile
+Environment=WEBCHAT_RUNTIME_DIR=/home/agent/server/runtime
+Environment=WEBCHAT_HOST=127.0.0.1
+Environment=WEBCHAT_PORT=3210
+PIDFile=/home/agent/server/.webchat-gateway.pid
+ExecStart=/home/agent/server/start.sh start
+ExecStop=/home/agent/server/start.sh stop
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+TimeoutStartSec=60
+TimeoutStopSec=15
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

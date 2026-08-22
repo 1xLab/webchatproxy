@@ -43,10 +43,11 @@ export function looksLikeBrowserCrash(error) {
 }
 
 export class JobManager {
-  constructor({ backend, journal, runtimeDir } = {}) {
+  constructor({ backend, journal, runtimeDir, fileStore = null } = {}) {
     this.backend = backend;
     this.journal = journal;
     this.runtimeDir = runtimeDir;
+    this.fileStore = fileStore;
     this.jobsDir = join(runtimeDir, "jobs");
     this.jobs = new Map();
     this.queue = [];
@@ -91,10 +92,16 @@ export class JobManager {
     const externalId = safeRequestId(requestId || payload.request_id || null);
     const id = externalId || `job_${crypto.randomUUID()}`;
     const model = payload.model || "chatgpt-web";
+    const conversationId = payload.conversation_id || null;
+    const attachments = Array.isArray(payload.attachments) ? payload.attachments.map((item) => typeof item === "object" ? item.id || item.file_id : item) : [];
     const request = {
       messages: payload.messages,
-      conversation_id: payload.conversation_id || null,
-      new_conversation: payload.new_conversation !== false,
+      conversation_id: conversationId,
+      project_id: payload.project_id || null,
+      project_url: payload.project_url || null,
+      attachments,
+      reasoning_effort: payload.reasoning_effort || null,
+      new_conversation: payload.new_conversation == null ? !conversationId : payload.new_conversation !== false,
       timeout: Math.max(1000, Number(payload.timeout) || 210000),
     };
     const hash = requestHash(model, request);
@@ -117,7 +124,8 @@ export class JobManager {
       request,
       request_hash: hash,
       prompt_preview: requestSummary(payload),
-      conversation_id: payload.conversation_id || null,
+      conversation_id: conversationId,
+      project_id: request.project_id,
       result: null,
       error: null,
       created_at: created,
@@ -128,7 +136,12 @@ export class JobManager {
     this.jobs.set(id, job);
     this.queue.push(id);
     await this.#persist(job);
-    this.journal?.record("job_queued", { jobId: id, conversationId: job.conversation_id });
+    this.journal?.record("job_queued", {
+      jobId: id,
+      conversationId: job.conversation_id,
+      projectId: job.project_id,
+      attachmentCount: attachments.length,
+    });
     this.#drain();
     return { job: this.#public(job), reused: false };
   }
@@ -229,13 +242,26 @@ export class JobManager {
       });
   }
 
-  async #askWithRecovery(job) {
-    const options = {
+  async #askOptions(job) {
+    let attachmentPaths = [];
+    if (job.request.attachments?.length) {
+      if (!this.fileStore) throw new Error("attachments requested but file store is unavailable");
+      attachmentPaths = (await this.fileStore.resolveMany(job.request.attachments)).map((file) => file.path);
+    }
+    return {
       newConversation: job.request.new_conversation,
       timeout: job.request.timeout,
       requestId: job.id,
       conversationId: job.request.conversation_id,
+      projectId: job.request.project_id,
+      projectUrl: job.request.project_url,
+      attachments: attachmentPaths,
+      reasoningEffort: job.request.reasoning_effort,
     };
+  }
+
+  async #askWithRecovery(job) {
+    const options = await this.#askOptions(job);
     try {
       return await this.backend.ask(job.request.messages, options);
     } catch (error) {
@@ -260,7 +286,7 @@ export class JobManager {
     job.started_at = now();
     job.updated_at = job.started_at;
     await this.#persist(job);
-    this.journal?.record("job_started", { jobId: job.id, conversationId: job.conversation_id });
+    this.journal?.record("job_started", { jobId: job.id, conversationId: job.conversation_id, projectId: job.project_id });
     try {
       const content = await this.#askWithRecovery(job);
       if (job.status === "cancel_requested") {
@@ -280,6 +306,7 @@ export class JobManager {
         jobId: job.id,
         status: job.status,
         conversationId: job.conversation_id,
+        projectId: job.project_id,
         contentLength: content?.length || 0,
       });
     } catch (error) {
@@ -316,6 +343,8 @@ export class JobManager {
       status: job.status,
       model: job.model,
       conversation_id: job.conversation_id,
+      project_id: job.project_id || job.request?.project_id || null,
+      attachments: [...(job.request?.attachments || [])],
       prompt_preview: job.prompt_preview,
       result: job.result,
       error: job.error,

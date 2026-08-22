@@ -1,78 +1,88 @@
-# Upstream Research
+# Upstream Engine Decision
 
-This control-plane work was designed after reviewing existing ChatGPT Web automation projects instead of assuming the browser UI had to be rediscovered from scratch.
+`webchatproxy` is an API-only proxy core. It does not provide a user interface and it does not depend on `webagent`, Laravel or `/api/chat/*` routes.
 
-## ChatGPT-Web2API
+## Selected engine: ChatGPT-Web2API
 
 Repository: `Octo-Lex/ChatGPT-Web2API`
 
 License: MIT.
 
-Useful validated concepts:
-
-- authenticated browser session as the source of ChatGPT Web access;
-- structured reads from ChatGPT `/backend-api/*` endpoints;
-- Project discovery through `gizmos/snorlax/sidebar`;
-- Project detail and file metadata;
-- Project conversation listing;
-- full historical conversation reads;
-- explicit separation between ordinary backend reads and protected chat write flows.
-
-`webchatproxy` does not vendor that project. The implementation in this repository is native Node.js and integrated with the existing `BrowserBackend`, runtime, diagnostics and job model.
-
-## chatgpt-mcp
-
-Repository: `parkermg/chatgpt-mcp`
-
-Useful behavioral references:
-
-- Playwright project selection/navigation;
-- use of browser file inputs and `setInputFiles` for ChatGPT attachments;
-- browser-side response completion observations.
-
-The repository root reviewed during this work did not expose a license file and its package metadata did not declare a license. Therefore no source code from it is copied into `webchatproxy`; only observable architectural/behavioral ideas were used as research input.
-
-## Why not install either project as a dependency
-
-The existing proxy already owns:
-
-- the persistent production `browser-profile`;
-- lifecycle and Xvfb handling;
-- job serialization and restart recovery;
-- HTTP/auth contract;
-- diagnostics/event journal;
-- response capture;
-- the fixed production runtime path `/home/agent/server`.
-
-Replacing that runtime with a second browser automation stack would add profile contention and duplicate lifecycle logic. Reusing verified protocol knowledge and browser behaviors while keeping one browser owner is safer.
-
-## Design result
-
-The selected architecture is:
+Runtime dependency is pinned to the reviewed upstream commit:
 
 ```text
-                    +-------------------------+
-                    | authenticated Chromium |
-                    +------------+------------+
-                                 |
-                 +---------------+---------------+
-                 |                               |
-                 v                               v
-        structured read page              interactive chat page
-        GET /backend-api/*                Playwright UI actions
-                 |                               |
-       Projects/history/files             send/upload/navigation
+497527dceabfa3f95961e23c291e618c5570f1ac
 ```
 
-The read page and chat page share the same persistent Playwright browser context/profile but serve different responsibilities. Resource reads do not need to navigate the active conversation page.
+The pin is declared in `server/requirements-engine.txt` so ChatGPT Web drift or upstream changes are explicit and reproducible.
 
-## Compatibility note
+The upstream engine owns the normal browser/CDP runtime and provides the mature implementation for:
 
-The ChatGPT Web backend endpoints and DOM selectors are undocumented implementation details and may change. They are intentionally isolated in:
+- ChatGPT session/token lifecycle;
+- Chrome/CDP ownership;
+- model discovery and model selection;
+- Project discovery;
+- conversation listing and history retrieval;
+- Project file metadata reads;
+- Project-aware and conversation-aware chat;
+- browser locking, retry, rate-limit handling, breakers and diagnostics.
+
+`webchatproxy` no longer maintains its own JavaScript implementation of ChatGPT `/backend-api/*` reads. The former `server/lib/chatgpt-control.mjs` implementation was removed.
+
+## Product boundary
+
+The public product remains the Node HTTP facade on port 3210:
 
 ```text
-server/lib/chatgpt-control.mjs
-server/browser-backend.mjs
+API consumer
+    |
+    v
+webchatproxy :3210
+    |  auth / jobs / aliases / uploads / diagnostics
+    v
+Web2ApiEngine
+    |
+    v
+loopback Python bridge :3211
+    |
+    v
+pinned ChatGPT-Web2API
+    |
+    v
+Chrome/CDP + canonical browser-profile
+    |
+    v
+chatgpt.com
 ```
 
-Changes in ChatGPT should be repaired in those adapters rather than propagated into client APIs or application code.
+The Python bridge is an internal implementation detail and binds to loopback only. MCP is not part of the public product surface.
+
+The canonical production paths remain:
+
+```text
+/home/agent/server
+/home/agent/server/browser-profile
+/home/agent/server/runtime
+```
+
+## Why this replaced the custom control plane
+
+A custom Node control-plane request to the undocumented ChatGPT Project sidebar API returned HTTP 422 during live testing. Maintaining a second reverse-engineered backend client duplicated work already handled by a more mature MIT-licensed implementation.
+
+The replacement deliberately centralizes ChatGPT Web drift in the upstream engine instead of duplicating endpoint payloads, token handling, CDP lifecycle and retry behavior in this repository.
+
+## chatgpt-mcp research
+
+Repository: `parkermg/chatgpt-mcp`.
+
+It was reviewed only as a behavioral reference for browser automation and attachment workflows. It is not a dependency and no source from it is vendored into `webchatproxy`.
+
+## Current capability boundary
+
+The pinned ChatGPT-Web2API engine supports the core API paths used for models, Projects, conversations, Project file metadata and chat.
+
+Local binary staging through `/v1/files` remains available in `webchatproxy`, but the pinned upstream engine does not expose a safe per-message attachment operation. Therefore a chat request containing staged `attachments` currently fails closed with HTTP 501 instead of silently sending the prompt without its document.
+
+Likewise, `reasoning_effort` fails closed with HTTP 501 until the selected upstream engine implements that control.
+
+Persistent Project knowledge-file mutation is also not claimed as implemented.

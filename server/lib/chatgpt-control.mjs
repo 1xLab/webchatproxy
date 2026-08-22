@@ -1,3 +1,4 @@
+const CHATGPT_URL = "https://chatgpt.com/";
 const MAX_PROJECT_PAGES = 100;
 const MAX_CONVERSATION_PAGES = 100;
 
@@ -32,12 +33,28 @@ export class ChatGptControl {
     this.backend = backend;
     this.journal = journal;
     this.accountId = accountId || null;
+    this.controlPage = null;
+  }
+
+  async #getControlPage() {
+    await this.backend.start();
+    if (this.controlPage && !this.controlPage.isClosed?.()) return this.controlPage;
+
+    if (this.backend.context?.newPage) {
+      const page = await this.backend.context.newPage();
+      await page.goto(CHATGPT_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      this.controlPage = page;
+      this.journal?.record("chatgpt_control_page_ready");
+      return page;
+    }
+
+    const fallback = this.backend.page;
+    if (!fallback || fallback.isClosed?.()) throw controlError("browser page unavailable", "CHATGPT_BROWSER_UNAVAILABLE");
+    return fallback;
   }
 
   async #fetch(path, { method = "GET", body = null } = {}) {
-    await this.backend.start();
-    const page = this.backend.page;
-    if (!page || page.isClosed()) throw controlError("browser page unavailable", "CHATGPT_BROWSER_UNAVAILABLE");
+    const page = await this.#getControlPage();
     const accountId = this.accountId || this.backend.chatgptAccountId || null;
     const result = await page.evaluate(async ({ path, method, body, accountId }) => {
       const sessionResponse = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" });
@@ -77,7 +94,7 @@ export class ChatGptControl {
     catch { throw controlError("ChatGPT backend returned invalid JSON", "CHATGPT_INVALID_JSON", result.status, String(result.text).slice(0, 1000)); }
   }
 
-  async listProjects({ all = true, cursor = null, ownedOnly = true } = {}) {
+  async listProjects({ all = true, cursor = null, ownedOnly = false } = {}) {
     const items = [];
     let next = cursor;
     let pages = 0;
@@ -85,6 +102,7 @@ export class ChatGptControl {
       const params = new URLSearchParams({
         owned_only: ownedOnly ? "true" : "false",
         conversations_per_gizmo: "0",
+        limit: "100",
       });
       if (next) params.set("cursor", next);
       const payload = normalizeProjectPage(await this.#fetch(`/backend-api/gizmos/snorlax/sidebar?${params}`));
@@ -124,7 +142,7 @@ export class ChatGptControl {
       items.push(...payload.items);
       total = payload.total ?? total;
       pages++;
-      if (!all || payload.items.length < safeLimit || (total != null && items.length + currentOffset >= Number(total))) break;
+      if (!all || payload.items.length < safeLimit || (total != null && items.length + Math.max(0, Number(offset) || 0) >= Number(total))) break;
       currentOffset += safeLimit;
       if (pages >= MAX_CONVERSATION_PAGES) throw controlError("conversation pagination limit reached", "CHATGPT_PAGINATION_LIMIT");
     } while (true);

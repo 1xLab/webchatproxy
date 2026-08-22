@@ -41,8 +41,20 @@ function applyCors(req, res, originRule) {
     res.setHeader("Access-Control-Allow-Origin", originRule === "*" ? "*" : origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key, Prefer");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key, Prefer, X-Filename");
   }
+}
+
+function boolParam(value, fallback = false) {
+  if (value == null || value === "") return fallback;
+  return /^(1|true|yes|on)$/i.test(String(value));
+}
+
+function headerFilename(req) {
+  const value = String(req.headers["x-filename"] || "").trim();
+  if (!value) return null;
+  try { return decodeURIComponent(value); }
+  catch { return value; }
 }
 
 function openAiResponse(job) {
@@ -60,6 +72,8 @@ function openAiResponse(job) {
     gateway: {
       job_id: job.id,
       conversation_id: job.conversation_id || null,
+      project_id: job.project_id || null,
+      attachments: job.attachments || [],
       status: job.status,
     },
   };
@@ -68,6 +82,13 @@ function openAiResponse(job) {
 function errorStatus(error) {
   if (error.code === "REQUEST_ID_CONFLICT") return 409;
   if (error.code === "JOB_RUNNING") return 409;
+  if (error.code === "PROJECT_NOT_FOUND" || error.code === "ENOENT") return 404;
+  if (["INVALID_PROJECT_ID", "INVALID_CONVERSATION_ID"].includes(error.code)) return 400;
+  if (error.code === "UPLOAD_TOO_LARGE") return 413;
+  if (error.code === "CHATGPT_AUTH_REQUIRED") return 503;
+  if (["CHATGPT_BACKEND_FORBIDDEN", "CHATGPT_BACKEND_ERROR", "CHATGPT_INVALID_JSON"].includes(error.code)) return 502;
+  if (error.message === "invalid upload id") return 400;
+  if (error.message === "missing_x_filename") return 400;
   if (error.message === "invalid_json") return 400;
   if (error.message === "request_body_too_large") return 413;
   return 500;
@@ -108,8 +129,75 @@ export function createGatewayHttpServer(runtime) {
       if (req.method === "GET" && url.pathname === "/v1/models") {
         return json(res, 200, {
           object: "list",
-          data: [{ id: "chatgpt-web", object: "model", created: 1760000000, owned_by: "webchat-gateway" }],
+          data: [{ id: "chatgpt-web", object: "model", created: 1760000000, owned_by: "webchatproxy" }],
         });
+      }
+
+      if (req.method === "GET" && url.pathname === "/v1/projects") {
+        return json(res, 200, await runtime.listProjects({
+          live: boolParam(url.searchParams.get("live"), false),
+          sync: boolParam(url.searchParams.get("sync"), true),
+          all: boolParam(url.searchParams.get("all"), true),
+          cursor: url.searchParams.get("cursor") || null,
+        }));
+      }
+
+      if (req.method === "POST" && url.pathname === "/v1/projects/import") {
+        return json(res, 200, await runtime.importProjects(await readJson(req)));
+      }
+
+      if (req.method === "POST" && url.pathname === "/v1/projects/sync") {
+        return json(res, 200, await runtime.listProjects({ live: true, sync: true, all: true }));
+      }
+
+      const projectConversationsMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/conversations$/);
+      if (req.method === "GET" && projectConversationsMatch) {
+        const project = decodeURIComponent(projectConversationsMatch[1]);
+        return json(res, 200, await runtime.listConversations({
+          project,
+          all: boolParam(url.searchParams.get("all"), false),
+          cursor: url.searchParams.get("cursor") || null,
+          limit: url.searchParams.get("limit") || 50,
+        }));
+      }
+
+      const projectFilesMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/files$/);
+      if (req.method === "GET" && projectFilesMatch) {
+        return json(res, 200, await runtime.listProjectFiles(decodeURIComponent(projectFilesMatch[1])));
+      }
+
+      if (req.method === "GET" && url.pathname === "/v1/conversations") {
+        return json(res, 200, await runtime.listConversations({
+          project: url.searchParams.get("project") || null,
+          project_id: url.searchParams.get("project_id") || null,
+          all: boolParam(url.searchParams.get("all"), false),
+          cursor: url.searchParams.get("cursor") || null,
+          offset: url.searchParams.get("offset") || 0,
+          limit: url.searchParams.get("limit") || 50,
+        }));
+      }
+
+      const conversationMatch = url.pathname.match(/^\/v1\/conversations\/([^/]+)$/);
+      if (req.method === "GET" && conversationMatch) {
+        return json(res, 200, { conversation: await runtime.getConversation(decodeURIComponent(conversationMatch[1])) });
+      }
+
+      if (req.method === "POST" && url.pathname === "/v1/files") {
+        const filename = headerFilename(req);
+        if (!filename) throw new Error("missing_x_filename");
+        const file = await runtime.saveUpload(req, {
+          filename,
+          mime: req.headers["content-type"] || "application/octet-stream",
+          contentLength: req.headers["content-length"] || null,
+        });
+        return json(res, 201, { file }, { Location: `/v1/files/${encodeURIComponent(file.id)}` });
+      }
+
+      const fileMatch = url.pathname.match(/^\/v1\/files\/([^/]+)$/);
+      if (fileMatch) {
+        const id = decodeURIComponent(fileMatch[1]);
+        if (req.method === "GET") return json(res, 200, { file: await runtime.getUpload(id) });
+        if (req.method === "DELETE") return json(res, 200, await runtime.deleteUpload(id));
       }
 
       if (req.method === "POST" && url.pathname === "/v1/jobs") {
@@ -236,8 +324,9 @@ export function createGatewayHttpServer(runtime) {
         error: error.message,
         code: error.code || null,
       }, "error");
-      const payload = { error: error.message };
+      const payload = { error: error.message, code: error.code || null };
       if (error.code === "JOB_RUNNING") payload.id = error.jobId;
+      if (error.status != null) payload.upstream_status = error.status;
       return json(res, errorStatus(error), payload);
     }
   });

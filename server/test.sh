@@ -25,7 +25,9 @@ result() {
     FAIL) FAIL=$((FAIL+1)) ;;
     WARN) WARN=$((WARN+1)) ;;
   esac
-  printf '%-4s %-6s %-48s HTTP %-3s %s\n' "$kind" "$method" "$path" "$code" "$note"
+  # stderr is intentional: callers may capture/redirect request stdout to obtain
+  # only the HTTP code without hiding the per-endpoint PASS/FAIL line.
+  printf '%-4s %-6s %-52s HTTP %-3s %s\n' "$kind" "$method" "$path" "$code" "$note" >&2
 }
 
 request() {
@@ -33,6 +35,7 @@ request() {
   shift 3
   : > "$LAST_BODY"
   : > "$LAST_HEADERS"
+  : > "$TMP_DIR/curl.err"
   local code
   code=$(curl -sS --max-time "${WEBCHAT_TEST_TIMEOUT:-20}" \
     -D "$LAST_HEADERS" -o "$LAST_BODY" -w '%{http_code}' \
@@ -42,8 +45,8 @@ request() {
     result PASS "$method" "$path" "$code"
   else
     local summary
-    summary=$(tr '\n' ' ' < "$LAST_BODY" | head -c 180)
-    [ -z "$summary" ] && summary=$(tr '\n' ' ' < "$TMP_DIR/curl.err" | head -c 180)
+    summary=$(tr '\n' ' ' < "$LAST_BODY" | head -c 220)
+    [ -z "$summary" ] && summary=$(tr '\n' ' ' < "$TMP_DIR/curl.err" | head -c 220)
     result FAIL "$method" "$path" "$code" "$summary"
   fi
   printf '%s' "$code"
@@ -66,26 +69,35 @@ json_value() {
 printf 'webchatproxy endpoint test\n'
 printf 'BASE_URL=%s\n\n' "$BASE_URL"
 
-# Core/health
+# Core/health. /ready is strict: degraded runtime is a failed production test.
 request GET /health '200' >/dev/null
-request GET /ready '200,503' >/dev/null
+request GET /ready '200' >/dev/null
 request GET /v1/account '200' >/dev/null
-request GET /v1/models '200,502,503' >/dev/null
+request GET /v1/models '200' >/dev/null
 
-# Projects control plane
+# Projects control plane. Local catalog import is tested separately from the live
+# ChatGPT Project surface so a synthetic project id is never sent upstream.
 request GET '/v1/projects' '200' >/dev/null
-request GET '/v1/projects?live=1&sync=0' '200,502,503' >/dev/null
-request POST /v1/projects/sync '200,502,503' -H 'Content-Type: application/json' -d '{}' >/dev/null
 request POST /v1/projects/import '200' -H 'Content-Type: application/json' \
   -d '{"projects":{"Endpoint Test":{"id":"g-p-endpointtest","aliases":["endpoint-test"]}}}' >/dev/null
-request GET '/v1/projects/g-p-endpointtest/conversations?limit=1' '200,502,503' >/dev/null
-request GET '/v1/projects/g-p-endpointtest/files' '200,502,503' >/dev/null
+request GET '/v1/projects?live=1&sync=0' '200' >/dev/null
+REAL_PROJECT_ID=$(json_value projects.0.id)
+request POST /v1/projects/sync '200' -H 'Content-Type: application/json' -d '{}' >/dev/null
 
-# Conversations
-request GET '/v1/conversations?limit=1' '200,502,503' >/dev/null
-request GET '/v1/conversations/nonexistent' '200,400,404,502,503' >/dev/null
+if [ -n "$REAL_PROJECT_ID" ]; then
+  request GET "/v1/projects/$REAL_PROJECT_ID/conversations?limit=1" '200' >/dev/null
+  request GET "/v1/projects/$REAL_PROJECT_ID/files" '200' >/dev/null
+else
+  result WARN GET '/v1/projects/{real-id}/conversations' '---' 'no live ChatGPT Project returned by account'
+  result WARN GET '/v1/projects/{real-id}/files' '---' 'no live ChatGPT Project returned by account'
+fi
 
-# File staging lifecycle
+# Conversations. Global list must work. A deliberately unknown id may be 404 or
+# an upstream 4xx depending on ChatGPT behavior, but it must never hang.
+request GET '/v1/conversations?limit=1' '200' >/dev/null
+request GET '/v1/conversations/nonexistent' '400,404' >/dev/null
+
+# File staging lifecycle.
 printf 'webchatproxy endpoint test\n' > "$TMP_DIR/upload.txt"
 request POST /v1/files '201' \
   -H 'Content-Type: text/plain' \
@@ -98,7 +110,7 @@ else
   result FAIL GET '/v1/files/{id}' '---' 'upload did not return file.id'
 fi
 
-# Jobs lifecycle
+# Jobs lifecycle.
 request POST /v1/jobs '202' -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"WEBCHAT_ENDPOINT_TEST"}],"model":"chatgpt-web"}' >/dev/null
 JOB_ID=$(json_value job.id)
@@ -111,30 +123,31 @@ else
   result FAIL GET '/v1/jobs/{id}/events' '---' 'job creation did not return job.id'
 fi
 
-# OpenAI-style endpoint, async so this script does not block on a model answer.
+# OpenAI-style endpoint, async so the script validates acceptance without waiting
+# for a full model generation. Engine health is already enforced above.
 request POST /v1/chat/completions '202' -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"WEBCHAT_ENDPOINT_TEST"}],"model":"chatgpt-web","async":true}' >/dev/null
 CHAT_JOB_ID=$(json_value id)
 
-# Debug/diagnostics
+# Debug/diagnostics.
 request GET /v1/debug/config '200' >/dev/null
 request GET /v1/debug/runtime '200' >/dev/null
-request GET /v1/debug/doctor '200,503' >/dev/null
-request GET /v1/debug/dom '200,501,502,503' >/dev/null
+request GET /v1/debug/doctor '200' >/dev/null
+request GET /v1/debug/dom '501' >/dev/null
 request GET '/v1/debug/events?limit=10' '200' >/dev/null
-request GET /v1/debug/screenshot '200,501,502,503' >/dev/null
+request GET /v1/debug/screenshot '501' >/dev/null
 request POST /v1/debug/bundle '201' >/dev/null
 
 # This endpoint is intentionally disruptive. Test only when explicitly enabled.
 if [ "${WEBCHAT_TEST_RESTART:-0}" = "1" ]; then
-  request POST /v1/debug/browser/restart '200,502,503' >/dev/null
+  request POST /v1/debug/browser/restart '200' >/dev/null
 else
   result WARN POST /v1/debug/browser/restart '---' 'skipped; set WEBCHAT_TEST_RESTART=1 to execute'
 fi
 
-request POST /v1/debug/smoke '202,502,503' >/dev/null
+request POST /v1/debug/smoke '202' >/dev/null
 
-# CORS/preflight route
+# CORS/preflight route.
 request OPTIONS /v1/models '204' >/dev/null
 
 # Cleanup generated resources.

@@ -4,6 +4,13 @@
 The bridge is intentionally thin: business operations delegate to the pinned
 upstream do_* functions. Chrome/CDP ownership stays here; the public Node gateway
 remains responsible for external auth, jobs and compatibility.
+
+Chat generation has one deliberate hardening layer: the upstream DOM stream can
+briefly expose UI-state text such as "Thinking"/"Pensando" and then replace that
+node with the real assistant answer. Delta calculation across that replacement
+can leak the placeholder and truncate the beginning of the final answer. We use
+the DOM stream only to drive/wait for generation, then reconcile the result from
+the canonical conversation tree before returning it to callers.
 """
 from __future__ import annotations
 
@@ -90,6 +97,34 @@ def text_content(content: Any) -> str:
     if content is None:
         return ""
     return str(content)
+
+
+def message_text(message: dict[str, Any] | None) -> str:
+    """Extract textual content from a ChatGPT backend conversation message."""
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content") or {}
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        return ""
+    return " ".join(part for part in parts if isinstance(part, str)).strip()
+
+
+def latest_assistant_from_tree(data: dict[str, Any]) -> str:
+    """Walk current_node backwards and return the newest assistant message."""
+    mapping = data.get("mapping") or {}
+    node_id = data.get("current_node")
+    visited: set[str] = set()
+    while node_id and node_id not in visited:
+        visited.add(node_id)
+        node = mapping.get(node_id) or {}
+        message = node.get("message")
+        if isinstance(message, dict) and (message.get("author") or {}).get("role") == "assistant":
+            text = message_text(message)
+            if text:
+                return text
+        node_id = node.get("parent")
+    return ""
 
 
 def require_gate(name: str) -> None:
@@ -222,6 +257,33 @@ class EngineBridge:
         except OSError:
             return False
 
+    async def reconcile_assistant(self, driver: CDPDriver, conversation_id: str) -> str:
+        """Read the final assistant answer from the canonical conversation tree.
+
+        The backend can lag the DOM by a few hundred milliseconds. Retry briefly
+        after generation completion. We intentionally do not fall back to the raw
+        DOM delta text: returning a retryable upstream error is safer than serving
+        a response known to be potentially corrupted at the placeholder->answer
+        transition.
+        """
+        if not conversation_id:
+            raise RuntimeError("generation completed without conversation_id")
+        attempts = int_arg(os.environ.get("WEBCHAT_RECONCILE_ATTEMPTS"), 12, 1, 60)
+        delay_ms = int_arg(os.environ.get("WEBCHAT_RECONCILE_DELAY_MS"), 250, 25, 5000)
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                data = await driver.get_conversation(conversation_id)
+                canonical = latest_assistant_from_tree(data)
+                if canonical:
+                    return canonical
+            except Exception as exc:
+                last_error = exc
+            if attempt + 1 < attempts:
+                await asyncio.sleep(delay_ms / 1000)
+        suffix = f": {last_error}" if last_error else ""
+        raise RuntimeError(f"canonical assistant response unavailable after generation{suffix}")
+
     async def health(self, _request: web.Request) -> web.Response:
         connected = bool(self.driver is not None and self.driver.is_connected)
         chrome_running = self.cdp_reachable()
@@ -239,6 +301,7 @@ class EngineBridge:
                 "write_enabled": os.environ.get(WRITE_ENV) == "1",
                 "destructive_enabled": os.environ.get(DESTRUCTIVE_ENV) == "1",
                 "streaming": True,
+                "response_reconciliation": "conversation_tree",
             },
         })
 
@@ -363,10 +426,13 @@ class EngineBridge:
     async def chat_with_gpt(self, request: web.Request) -> web.Response:
         body = await request.json()
         async with self.mutation_lock:
-            result = await do_chat_with_gpt(await self.ensure_driver(), {
+            driver = await self.ensure_driver()
+            result = await do_chat_with_gpt(driver, {
                 "gpt_id": request.match_info["gpt_id"].strip(),
                 "message": str(body.get("message") or ""),
             })
+            conv_id = str(result.get("conversation_id") or driver._current_conv_id or "")
+            result["content"] = await self.reconcile_assistant(driver, conv_id)
         return web.json_response(result)
 
     def chat_args(self, body: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -414,7 +480,11 @@ class EngineBridge:
         if env_bool_value(str(body.get("stream", "false")), False):
             return await self.chat_stream(request, args)
         async with self.mutation_lock:
-            result = await do_chat_completion(await self.ensure_driver(), args, self.config)
+            driver = await self.ensure_driver()
+            result = await do_chat_completion(driver, args, self.config)
+            conv_id = str(result.get("conversation_id") or driver._current_conv_id or "")
+            result["conversation_id"] = conv_id
+            result["content"] = await self.reconcile_assistant(driver, conv_id)
         return web.json_response(result)
 
     async def chat_stream(self, request: web.Request, args: dict[str, Any]) -> web.StreamResponse:
@@ -435,6 +505,24 @@ class EngineBridge:
             else:
                 await driver.navigate_new_chat(gizmo_id=project_id)
 
+            # Important: do not forward raw DOM deltas. ChatGPT can replace a
+            # temporary reasoning/status node (e.g. "Pensando") with the final
+            # answer, and the upstream delta logic can then leak that placeholder
+            # and lose the beginning of the real text. We still consume the
+            # stream so generation/completion detection works, but emit only the
+            # reconciled canonical response after completion.
+            budgets = DetectorBudgets.from_config(self.config.chatgpt, model)
+            async for _chunk in driver.send_and_stream(
+                message if not system_prompt else full_text,
+                timeout=120,
+                budgets=budgets,
+                model=model,
+            ):
+                pass
+
+            conv_id = str(driver._current_conv_id or conversation_id or "")
+            canonical = await self.reconcile_assistant(driver, conv_id)
+
             response = web.StreamResponse(status=200, headers={
                 "Content-Type": "text/event-stream; charset=utf-8",
                 "Cache-Control": "no-cache",
@@ -443,27 +531,26 @@ class EngineBridge:
             await response.prepare(request)
             completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
             created = int(time.time())
-            budgets = DetectorBudgets.from_config(self.config.chatgpt, model)
             try:
-                async for chunk in driver.send_and_stream(message if not system_prompt else full_text, timeout=120, budgets=budgets, model=model):
-                    if chunk.delta:
-                        payload = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": model,
-                            "choices": [{"index": 0, "delta": {"content": chunk.delta}, "finish_reason": None}],
-                        }
-                        await response.write(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode())
+                payload = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {"content": canonical}, "finish_reason": None}],
+                }
+                await response.write(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode())
                 final_payload = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "conversation_id": driver._current_conv_id or "",
+                    "conversation_id": conv_id,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
-                await response.write(f"data: {json.dumps(final_payload)}\n\ndata: [DONE]\n\n".encode())
+                await response.write(
+                    f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\ndata: [DONE]\n\n".encode()
+                )
             finally:
                 await response.write_eof()
             return response

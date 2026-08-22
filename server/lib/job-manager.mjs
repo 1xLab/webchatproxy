@@ -3,7 +3,6 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/pro
 import { join } from "node:path";
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
-const STOP_SELECTOR = '[data-testid="stop-button"], button[aria-label*="Stop" i]';
 const now = () => new Date().toISOString();
 
 function safeRequestId(value) {
@@ -11,10 +10,6 @@ function safeRequestId(value) {
   const id = String(value).trim();
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(id)) throw new Error("request_id must match [A-Za-z0-9._:-] and be <= 128 chars");
   return id;
-}
-
-function conversationIdFromUrl(url = "") {
-  return String(url).match(/\/c\/([A-Za-z0-9_-]+)/)?.[1] || null;
 }
 
 function requestSummary(payload = {}) {
@@ -39,7 +34,8 @@ function requestHash(model, request) {
 
 export function looksLikeBrowserCrash(error) {
   const message = String(error?.message || error || "");
-  return /target (page|context|browser).*closed|target.*has been closed|browser.*has been closed|context.*has been closed|browser.*disconnected|browser.*crash/i.test(message);
+  return /target (page|context|browser).*closed|browser.*disconnected|browser.*crash|engine unavailable|connection refused/i.test(message)
+    || error?.code === "ENGINE_UNAVAILABLE";
 }
 
 export class JobManager {
@@ -91,9 +87,11 @@ export class JobManager {
     if (!Array.isArray(payload.messages) || payload.messages.length === 0) throw new Error("messages must be a non-empty array");
     const externalId = safeRequestId(requestId || payload.request_id || null);
     const id = externalId || `job_${crypto.randomUUID()}`;
-    const model = payload.model || "chatgpt-web";
+    const model = payload.model || "auto";
     const conversationId = payload.conversation_id || null;
-    const attachments = Array.isArray(payload.attachments) ? payload.attachments.map((item) => typeof item === "object" ? item.id || item.file_id : item) : [];
+    const attachments = Array.isArray(payload.attachments)
+      ? payload.attachments.map((item) => typeof item === "object" ? item.id || item.file_id : item)
+      : [];
     const request = {
       messages: payload.messages,
       conversation_id: conversationId,
@@ -141,6 +139,7 @@ export class JobManager {
       conversationId: job.conversation_id,
       projectId: job.project_id,
       attachmentCount: attachments.length,
+      model,
     });
     this.#drain();
     return { job: this.#public(job), reused: false };
@@ -192,16 +191,11 @@ export class JobManager {
       this.#notify(job);
       return this.#public(job);
     }
+    // The pinned upstream engine has no safe per-turn cancel API. Mark the job
+    // so the result is discarded when the in-flight engine call returns.
     job.status = "cancel_requested";
     job.updated_at = now();
     await this.#persist(job);
-    try {
-      const page = this.backend?.page;
-      if (page) {
-        const stop = page.locator(STOP_SELECTOR).first();
-        if (await stop.count() && await stop.isVisible().catch(() => false)) await stop.click({ timeout: 3000 }).catch(() => {});
-      }
-    } catch {}
     return this.#public(job);
   }
 
@@ -249,6 +243,7 @@ export class JobManager {
       attachmentPaths = (await this.fileStore.resolveMany(job.request.attachments)).map((file) => file.path);
     }
     return {
+      model: job.model,
       newConversation: job.request.new_conversation,
       timeout: job.request.timeout,
       requestId: job.id,
@@ -265,19 +260,10 @@ export class JobManager {
     try {
       return await this.backend.ask(job.request.messages, options);
     } catch (error) {
-      if (!looksLikeBrowserCrash(error)) throw error;
-      this.journal?.record("browser_auto_recovery", { jobId: job.id, error: error.message }, "warn");
-      try { await this.backend.context?.close?.(); } catch {}
-      this.backend.context = null;
-      this.backend.page = null;
-      this.backend.currentRequestId = null;
-      this.backend.lastNetworkText = "";
-      this.backend.lastThinkingText = "";
-      this.backend.networkComplete = false;
-      this.backend.lastConversationId = job.request.conversation_id || null;
-      this.backend.queue = Promise.resolve();
-      await this.backend.start();
-      return await this.backend.ask(job.request.messages, options);
+      if (!looksLikeBrowserCrash(error) || typeof this.backend?.restart !== "function") throw error;
+      this.journal?.record("engine_auto_recovery", { jobId: job.id, error: error.message, code: error.code || null }, "warn");
+      await this.backend.restart();
+      return this.backend.ask(job.request.messages, options);
     }
   }
 
@@ -286,7 +272,7 @@ export class JobManager {
     job.started_at = now();
     job.updated_at = job.started_at;
     await this.#persist(job);
-    this.journal?.record("job_started", { jobId: job.id, conversationId: job.conversation_id, projectId: job.project_id });
+    this.journal?.record("job_started", { jobId: job.id, conversationId: job.conversation_id, projectId: job.project_id, model: job.model });
     try {
       const content = await this.#askWithRecovery(job);
       if (job.status === "cancel_requested") {
@@ -296,9 +282,7 @@ export class JobManager {
         job.status = "completed";
         job.result = { content };
       }
-      job.conversation_id = this.backend?.conversationId?.()
-        || conversationIdFromUrl(this.backend?.page?.url?.())
-        || job.conversation_id;
+      job.conversation_id = this.backend?.conversationId?.() || job.conversation_id;
       job.updated_at = now();
       job.finished_at = job.updated_at;
       await this.#persist(job);
@@ -307,6 +291,7 @@ export class JobManager {
         status: job.status,
         conversationId: job.conversation_id,
         projectId: job.project_id,
+        model: job.model,
         contentLength: content?.length || 0,
       });
     } catch (error) {
@@ -315,7 +300,7 @@ export class JobManager {
       job.updated_at = now();
       job.finished_at = job.updated_at;
       await this.#persist(job);
-      this.journal?.record("job_failed", { jobId: job.id, error: error.message }, "error");
+      this.journal?.record("job_failed", { jobId: job.id, error: error.message, code: error.code || null }, "error");
     } finally {
       if (this.backend?.currentRequestId === job.id) this.backend.currentRequestId = null;
       this.backend?.progress?.delete?.(job.id);

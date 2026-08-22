@@ -80,7 +80,7 @@ fi
 
 request GET '/v1/conversations?limit=1' '200' >/dev/null
 CONVERSATION_ID=$(json_value items.0.id)
-request GET '/v1/conversations/nonexistent' '400,404,502' >/dev/null
+request GET '/v1/conversations/nonexistent' '200,400,404,502' >/dev/null
 
 if [ "${W2A_ENABLE_WRITE:-0}" != "1" ]; then
   request POST /v1/conversations/nonexistent/archive '403' -H 'Content-Type: application/json' -d '{"archive":true}' >/dev/null

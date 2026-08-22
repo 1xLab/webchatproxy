@@ -1,0 +1,9 @@
+{
+  "model": "gpt-5.6",
+  "input": [
+    {
+      "role": "user",
+      "content": "Você é o agente coder no projeto bridge-test. Execute este job criando no GitHub remoto, branch main, o arquivo projects/bridge-test/jobs/reviewer/0001/request.json. O conteúdo desse novo arquivo deve ser outro payload válido da OpenAI Responses API, sem wrapper proprietário e sem response.json. Esse novo request deve pedir ao agente reviewer que confirme que recebeu o handoff do coder e, como próxima ação, crie um novo request OpenAI válido para projects/bridge-test/jobs/coder/0003/request.json contendo a instrução final CODER_REVIEWED_OK. Não considere o job concluído por uma resposta no chat: o resultado deste job é a criação remota do novo request.json para reviewer."
+    }
+  ]
+}

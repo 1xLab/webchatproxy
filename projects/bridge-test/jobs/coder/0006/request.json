@@ -1,0 +1,14 @@
+{
+  "model": "gpt-5",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Execute este job. Use Git/SSH autenticado. NÃO use o workspace atualmente aberto. Crie um diretório temporário próprio e clone nele exatamente git@github.com:1xLab/ws_com_ia.git, branch main. Dentro desse clone temporário, crie projects/bridge-test/jobs/reviewer/0001/request.json contendo somente um payload válido da OpenAI Responses API. O novo request deve usar model gpt-5 e instruir o agente reviewer a criar projects/bridge-test/jobs/coder/0007/request.json, também como payload válido da OpenAI Responses API, com a instrução final CODER_REVIEWED_OK. Depois execute git add, commit e git push origin main. Em seguida execute git fetch origin main e confirme com git show origin/main:projects/bridge-test/jobs/reviewer/0001/request.json que o arquivo realmente existe no remoto. Só depois responda exatamente CODER_JOB_0006_OK. Se qualquer comando falhar, não responda CODER_JOB_0006_OK; informe o erro real."
+        }
+      ]
+    }
+  ]
+}

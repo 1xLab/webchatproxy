@@ -9,8 +9,11 @@ async function fakeEngine(handler) {
     for await (const chunk of req) body += chunk;
     const parsed = body ? JSON.parse(body) : null;
     const result = await handler(req, parsed);
-    const payload = JSON.stringify(result.body ?? result);
-    res.writeHead(result.status || 200, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) });
+    const hasBodyEnvelope = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "body");
+    const responseBody = hasBodyEnvelope ? result.body : result;
+    const statusCode = hasBodyEnvelope && Number.isInteger(result.statusCode) ? result.statusCode : 200;
+    const payload = JSON.stringify(responseBody);
+    res.writeHead(statusCode, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) });
     res.end(payload);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -31,7 +34,7 @@ test("Web2ApiEngine delegates projects, conversations and chat to loopback engin
     if (req.url.startsWith("/v1/conversations/conv-1?")) return { id: "conv-1", title: "Test", messages: [{ role: "user", content: "hi" }], total: 1, has_more: false };
     if (req.url === "/v1/projects/g-p-one/files") return { project_id: "g-p-one", files: [{ id: "file-1", name: "a.pdf" }] };
     if (req.url === "/v1/chat/completions") return { content: "ENGINE_OK", model: "auto", conversation_id: "conv-2" };
-    return { status: 404, body: { error: "not found" } };
+    return { statusCode: 404, body: { error: "not found" } };
   });
   t.after(() => fake.close());
 

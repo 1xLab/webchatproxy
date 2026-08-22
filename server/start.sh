@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# webchatproxy — standalone Playwright service.
-# Usage: ./start.sh [start|stop|restart|status|doctor|doctor-live|browser-install|browser-auth|logs]
+# webchatproxy — API gateway with ChatGPT-Web2API CDP engine.
+# Usage: ./start.sh [start|stop|restart|status|doctor|doctor-live|engine-install|browser-install|browser-auth|logs]
 set -euo pipefail
 
 cd "$(dirname "$0")"
 CORE_DIR="$(pwd -P)"
 
-# The Node/Playwright core, browser profile and runtime must never run from a
-# public document root. Existing production service layout is /home/<user>/server.
 reject_public_webroot() {
   local label="$1"
   local path="$2"
@@ -31,19 +29,18 @@ DISPLAY_FILE="$RUNTIME_DIR/display"
 HOST="${WEBCHAT_HOST:-127.0.0.1}"
 WEBCHAT_PORT="${WEBCHAT_PORT:-${PORT:-3210}}"
 NOFILE_TARGET="${WEBCHAT_NOFILE:-65535}"
+ENGINE_VENV="${WEBCHAT_ENGINE_VENV:-$CORE_DIR/.venv-engine}"
+ENGINE_PYTHON="${WEBCHAT_ENGINE_PYTHON:-$ENGINE_VENV/bin/python}"
 
 reject_public_webroot "gateway core" "$CORE_DIR"
 reject_public_webroot "gateway runtime" "$RUNTIME_DIR"
 reject_public_webroot "browser profile" "$PROFILE_DIR"
 
-# Server-safe defaults:
-# - use Playwright-managed Chromium unless REMOTE_IA_BROWSER_CHANNEL is explicit;
-# - run a real headed Chromium by default;
-# - when no graphical DISPLAY is supplied, xvfb-run owns a private X server,
-#   chooses a free display automatically and injects DISPLAY into the same
-#   process tree as Node/Chromium. No RDP/VNC or visible desktop is required.
+# The ChatGPT-Web2API engine owns Chrome. The Node gateway and its Python child
+# run in one process group and share the same DISPLAY/profile/runtime. Playwright
+# is retained only for the explicit browser-auth maintenance command.
 BROWSER_CHANNEL="${REMOTE_IA_BROWSER_CHANNEL:-}"
-BROWSER_LABEL="${BROWSER_CHANNEL:-playwright-default}"
+BROWSER_LABEL="${BROWSER_CHANNEL:-engine-chrome}"
 HEADLESS="${WEBCHAT_HEADLESS:-${REMOTE_IA_HEADLESS:-0}}"
 XVFB_SCREEN="${WEBCHAT_XVFB_SCREEN:-1920x1080x24}"
 
@@ -102,10 +99,29 @@ ensure_dependencies() {
   fi
 }
 
+install_engine() {
+  WEBCHAT_ENGINE_VENV="$ENGINE_VENV" bash engine/install.sh
+}
+
+ensure_engine_dependencies() {
+  if [ -x "$ENGINE_PYTHON" ] && "$ENGINE_PYTHON" -c 'import chatgpt_web2api' >/dev/null 2>&1; then
+    export WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON"
+    return 0
+  fi
+  if [ -n "${WEBCHAT_ENGINE_PYTHON:-}" ]; then
+    echo "ERROR: WEBCHAT_ENGINE_PYTHON cannot import chatgpt_web2api: $WEBCHAT_ENGINE_PYTHON" >&2
+    return 78
+  fi
+  echo "Installing pinned ChatGPT-Web2API engine..."
+  install_engine
+  ENGINE_PYTHON="$ENGINE_VENV/bin/python"
+  export WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON"
+}
+
 ensure_headed_runtime() {
   if [ "$HEADLESS" = "1" ] || [ -n "${DISPLAY:-}" ]; then return 0; fi
   if ! command -v xvfb-run >/dev/null 2>&1; then
-    echo "ERROR: headed Chromium requires xvfb-run when DISPLAY is not set."
+    echo "ERROR: headed Chrome requires xvfb-run when DISPLAY is not set."
     echo "Install Xvfb or set WEBCHAT_HEADLESS=1 explicitly."
     return 1
   fi
@@ -117,8 +133,7 @@ ensure_headed_runtime() {
 
 install_browser() {
   ensure_dependencies
-  echo "Installing Playwright Chromium for the current user..."
-  echo "channel=$BROWSER_LABEL headless=$HEADLESS"
+  echo "Installing Playwright Chromium for the browser-auth maintenance utility..."
   npx playwright install chromium
   echo
   npx playwright install --list
@@ -154,6 +169,7 @@ start_service() {
 
   ensure_nofile_limit
   ensure_dependencies
+  ensure_engine_dependencies
   ensure_headed_runtime
 
   if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
@@ -163,35 +179,38 @@ start_service() {
   rm -f "$DISPLAY_FILE"
 
   echo "Starting webchatproxy on ${HOST}:${WEBCHAT_PORT}..."
-  echo "Core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR nofile=$(ulimit -Sn)"
+  echo "Core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR engine_python=$WEBCHAT_ENGINE_PYTHON nofile=$(ulimit -Sn)"
 
   if [ "$HEADLESS" = "1" ]; then
-    echo "Browser channel=${BROWSER_LABEL} headless=1 display=none"
+    echo "Engine=ChatGPT-Web2API headless=1 display=none"
     nohup setsid env \
       WEBCHAT_PORT="$WEBCHAT_PORT" \
       WEBCHAT_HOST="$HOST" \
       WEBCHAT_RUNTIME_DIR="$RUNTIME_DIR" \
       WEBCHAT_PROFILE_DIR="$PROFILE_DIR" \
+      WEBCHAT_ENGINE_PYTHON="$WEBCHAT_ENGINE_PYTHON" \
       WEBCHAT_HEADLESS=1 \
       node bootstrap.mjs >> "$LOG_FILE" 2>&1 &
   elif [ -n "${DISPLAY:-}" ]; then
-    echo "Browser channel=${BROWSER_LABEL} headless=0 display=$DISPLAY (external)"
+    echo "Engine=ChatGPT-Web2API headless=0 display=$DISPLAY (external)"
     printf '%s\n' "$DISPLAY" > "$DISPLAY_FILE"
     nohup setsid env \
       WEBCHAT_PORT="$WEBCHAT_PORT" \
       WEBCHAT_HOST="$HOST" \
       WEBCHAT_RUNTIME_DIR="$RUNTIME_DIR" \
       WEBCHAT_PROFILE_DIR="$PROFILE_DIR" \
+      WEBCHAT_ENGINE_PYTHON="$WEBCHAT_ENGINE_PYTHON" \
       WEBCHAT_HEADLESS=0 \
       DISPLAY="$DISPLAY" \
       node bootstrap.mjs >> "$LOG_FILE" 2>&1 &
   else
-    echo "Browser channel=${BROWSER_LABEL} headless=0 display=xvfb-auto"
+    echo "Engine=ChatGPT-Web2API headless=0 display=xvfb-auto"
     nohup setsid env \
       WEBCHAT_PORT="$WEBCHAT_PORT" \
       WEBCHAT_HOST="$HOST" \
       WEBCHAT_RUNTIME_DIR="$RUNTIME_DIR" \
       WEBCHAT_PROFILE_DIR="$PROFILE_DIR" \
+      WEBCHAT_ENGINE_PYTHON="$WEBCHAT_ENGINE_PYTHON" \
       WEBCHAT_HEADLESS=0 \
       WEBCHAT_DISPLAY_FILE="$DISPLAY_FILE" \
       xvfb-run -a -e "$XVFB_LOG_FILE" \
@@ -208,7 +227,7 @@ start_service() {
       local active_display="none"
       if [ -s "$DISPLAY_FILE" ]; then active_display="$(cat "$DISPLAY_FILE")"; fi
       echo "webchatproxy ready: $HEALTH_URL (PID $pid)"
-      echo "Runtime headless=$HEADLESS display=$active_display nofile=$(ulimit -Sn)"
+      echo "Runtime engine=chatgpt-web2api headless=$HEADLESS display=$active_display nofile=$(ulimit -Sn)"
       node doctor.mjs || true
       return 0
     fi
@@ -239,7 +258,7 @@ browser_auth() {
     stop_service
   fi
 
-  echo "Starting headed Chromium with the canonical browser-profile..."
+  echo "Starting headed Chromium with the canonical browser-profile for authentication maintenance..."
   echo "profile=$PROFILE_DIR"
   echo "nofile=$(ulimit -Sn)"
 
@@ -264,11 +283,11 @@ status_service() {
   local active_display="none"
   if [ -s "$DISPLAY_FILE" ]; then active_display="$(cat "$DISPLAY_FILE")"; fi
   if is_running; then
-    echo "running pid=$(cat "$PID_FILE") host=$HOST port=$WEBCHAT_PORT browser=$BROWSER_LABEL headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
+    echo "running pid=$(cat "$PID_FILE") host=$HOST port=$WEBCHAT_PORT engine=chatgpt-web2api headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
     curl -fsS --max-time 3 "$HEALTH_URL" || true
     echo
   else
-    echo "stopped host=$HOST port=$WEBCHAT_PORT browser=$BROWSER_LABEL headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
+    echo "stopped host=$HOST port=$WEBCHAT_PORT engine=chatgpt-web2api headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
     return 1
   fi
 }
@@ -281,8 +300,9 @@ case "$cmd" in
   status) status_service ;;
   doctor) ensure_dependencies; node doctor.mjs ;;
   doctor-live) ensure_dependencies; node doctor.mjs --live ;;
+  engine-install) install_engine ;;
   browser-install) install_browser ;;
   browser-auth) browser_auth ;;
   logs) tail -n "${LINES:-200}" "$LOG_FILE" ;;
-  *) echo "Usage: $0 [start|stop|restart|status|doctor|doctor-live|browser-install|browser-auth|logs]"; exit 2 ;;
+  *) echo "Usage: $0 [start|stop|restart|status|doctor|doctor-live|engine-install|browser-install|browser-auth|logs]"; exit 2 ;;
 esac

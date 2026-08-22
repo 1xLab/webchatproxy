@@ -9,14 +9,17 @@
   "scripts": {
     "start": "node bootstrap.mjs",
     "doctor": "node doctor.mjs",
+    "doctor:control": "node doctor.mjs --control",
     "doctor:live": "node doctor.mjs --live",
     "doctor:contract": "node doctor.mjs --contract",
-    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-backend.mjs && node --check browser-auth.mjs && node --check doctor.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/diagnostics.mjs",
+    "catalog": "node catalog.mjs",
+    "engine:install": "bash engine/install.sh",
+    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-auth.mjs && node --check doctor.mjs && node --check catalog.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/web2api-engine.mjs && node --check lib/resource-catalog.mjs && node --check lib/file-store.mjs && python3 -m py_compile engine/web2api_bridge.py",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@kudoai/chatgpt.js": "^4.15.6",
     "playwright": "^1.61.1",
-    "ws": "^8.18.0"
+    "ws": "8.21.3"
   }
 }

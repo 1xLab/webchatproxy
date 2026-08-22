@@ -5,14 +5,28 @@ on:
     branches:
       - main
       - 'refactor/**'
+      - 'feature/**'
       - 'feat/**'
       - 'fix/**'
   pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      live_preflight:
+        description: 'Run authenticated pre-production checks on the self-hosted webchatproxy runner'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: webchatproxy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  W2A_PIN: 497527dceabfa3f95961e23c291e618c5570f1ac
 
 jobs:
   gateway:
+    name: Gateway contract and integration
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,21 +38,70 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: server/package-lock.json
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run doctor:contract
-      - run: bash -n start.sh remote_ia.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Node dependencies reproducibly
+        run: npm ci
+
+      - name: Block high severity Node dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Syntax and static checks
+        run: npm run check
+
+      - name: Node unit and integration tests
+        run: npm test
+
+      - name: Gateway contract doctor
+        run: npm run doctor:contract
+
+      - name: Validate shell entrypoints
+        run: bash -n start.sh remote_ia.sh engine/install.sh
+
+      - name: Install the actual pinned ChatGPT-Web2API engine
+        env:
+          WEBCHAT_ENGINE_BOOTSTRAP_PYTHON: python3
+        run: bash engine/install.sh
+
+      - name: Verify installed engine identity and imports
+        run: |
+          set -euo pipefail
+          .venv-engine/bin/python - <<'PY'
+          import importlib.metadata
+          from chatgpt_web2api.config import Config
+          from chatgpt_web2api.cdp_driver import CDPDriver
+          version = importlib.metadata.version('chatgpt-web2api')
+          assert version, 'missing chatgpt-web2api package version'
+          cfg = Config.load(None)
+          assert cfg.server.host in {'127.0.0.1', 'localhost', '::1'}
+          assert CDPDriver is not None
+          print('engine_version=' + version)
+          print('engine_import=ok')
+          PY
+          grep -Fq "$W2A_PIN" requirements-engine.txt
+
       - name: Node core must not depend on a web application
         working-directory: .
         shell: bash
         run: |
           set -euo pipefail
           if grep -RInE 'public_html|/home/[^/]+/public_html|sistema/|webagent/' server \
-            --include='*.mjs' --include='*.js'; then
+            --include='*.mjs' --include='*.js' --include='*.py'; then
             echo 'ERROR: proxy core contains a dependency on an external web application'
             exit 1
           fi
+
+      - name: Custom ChatGPT backend implementation must stay removed
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e server/lib/chatgpt-control.mjs
+          ! grep -RIn 'ChatGptControl' server --include='*.mjs' --include='*.js'
+          grep -Fq "$W2A_PIN" server/requirements-engine.txt
+
       - name: start.sh rejects public webroot runtime paths
         shell: bash
         run: |
@@ -50,11 +113,13 @@ jobs:
           set -e
           test "$CODE" = "78"
           grep -q 'must not live under public_html' /tmp/webroot-boundary.log
-      - name: Standalone HTTP/auth contract
+
+      - name: Standalone HTTP auth and control-plane contract
         shell: bash
         run: |
           set -euo pipefail
-          WEBCHAT_DISABLE_BROWSER_START=1 \
+          rm -rf /tmp/webchatproxy-ci
+          WEBCHAT_ENGINE_AUTOSTART=0 \
           WEBCHAT_API_TOKEN=ci-secret \
           WEBCHAT_PORT=3218 \
           WEBCHAT_RUNTIME_DIR=/tmp/webchatproxy-ci \
@@ -66,9 +131,95 @@ jobs:
             sleep 0.25
           done
           grep -q '"service":"webchat-gateway"' /tmp/health.json
+          grep -q '"backend":"chatgpt-web2api"' /tmp/health.json
           CODE=$(curl -sS -o /tmp/unauthorized.json -w '%{http_code}' http://127.0.0.1:3218/v1/debug/config)
           test "$CODE" = "401"
-          curl -fsS -H 'Authorization: Bearer ci-secret' http://127.0.0.1:3218/v1/debug/config | grep -q '"browser_start_disabled":true'
-          curl -fsS -H 'Authorization: Bearer ci-secret' http://127.0.0.1:3218/v1/debug/runtime | grep -q '"service":"webchat-gateway"'
-          READY=$(curl -sS -H 'Authorization: Bearer ci-secret' -o /tmp/ready.json -w '%{http_code}' http://127.0.0.1:3218/ready)
+          AUTH=(-H 'Authorization: Bearer ci-secret')
+          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/debug/config | grep -q '"backend":"chatgpt-web2api"'
+          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/debug/runtime | grep -q '"service":"webchat-gateway"'
+          READY=$(curl -sS "${AUTH[@]}" -o /tmp/ready.json -w '%{http_code}' http://127.0.0.1:3218/ready)
           test "$READY" = "503"
+
+          curl -fsS "${AUTH[@]}" -H 'Content-Type: application/json' \
+            -d '{"projects":{"CI Project":{"id":"g-p-ci123","aliases":["ci"]}}}' \
+            http://127.0.0.1:3218/v1/projects/import >/tmp/project-import.json
+          grep -q '"imported":1' /tmp/project-import.json
+          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/projects >/tmp/projects.json
+          grep -q 'g-p-ci123' /tmp/projects.json
+
+          printf 'ci attachment\n' >/tmp/ci-attachment.txt
+          curl -fsS "${AUTH[@]}" -H 'Content-Type: text/plain' -H 'X-Filename: ci-attachment.txt' \
+            --data-binary @/tmp/ci-attachment.txt http://127.0.0.1:3218/v1/files >/tmp/file.json
+          FILE_ID=$(node -e 'const x=require("fs").readFileSync("/tmp/file.json","utf8"); process.stdout.write(JSON.parse(x).file.id)')
+          test -n "$FILE_ID"
+          curl -fsS "${AUTH[@]}" "http://127.0.0.1:3218/v1/files/$FILE_ID" | grep -q 'ci-attachment.txt'
+
+          ATTACH_CODE=$(curl -sS -o /tmp/attachment-chat.json -w '%{http_code}' \
+            "${AUTH[@]}" -H 'Content-Type: application/json' \
+            -d "{\"model\":\"chatgpt-web\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"attachments\":[\"$FILE_ID\"]}" \
+            http://127.0.0.1:3218/v1/chat/completions)
+          test "$ATTACH_CODE" = "501"
+          grep -q 'ENGINE_ATTACHMENTS_UNSUPPORTED' /tmp/attachment-chat.json
+
+          curl -fsS -X DELETE "${AUTH[@]}" "http://127.0.0.1:3218/v1/files/$FILE_ID" | grep -q '"deleted":true'
+
+  upstream-engine:
+    name: Pinned upstream engine test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Checkout exact reviewed upstream commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin https://github.com/Octo-Lex/ChatGPT-Web2API.git
+          git -C upstream fetch --depth=1 origin "$W2A_PIN"
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = "$W2A_PIN"
+      - name: Install upstream development dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e './upstream[dev]'
+      - name: Ruff upstream runtime source for real errors
+        run: ruff check upstream/src --select E,F --ignore E402,E501
+      - name: Run upstream non-E2E tests
+        working-directory: upstream
+        env:
+          W2A_E2E_RUN: '0'
+        run: pytest -m 'not e2e' -q
+
+  production-preflight:
+    name: Authenticated production preflight
+    needs: [gateway, upstream-engine]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_preflight == true && vars.WEBCHAT_SELF_HOSTED_PREFLIGHT == '1' }}
+    runs-on: [self-hosted, linux, webchatproxy]
+    timeout-minutes: 20
+    steps:
+      - name: Refuse wrong runtime path
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d /home/agent/server
+          test -d /home/agent/server/browser-profile
+          test -d /home/agent/server/runtime
+      - name: Verify installed service before mutation
+        working-directory: /home/agent/server
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./start.sh status
+          curl -fsS http://127.0.0.1:3210/health
+      - name: Authenticated control-plane preflight
+        working-directory: /home/agent/server
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run doctor:control
+          curl -fsS -X POST http://127.0.0.1:3210/v1/projects/sync >/tmp/webchat-projects.json
+          node -e 'const x=JSON.parse(require("fs").readFileSync("/tmp/webchat-projects.json")); if(!Array.isArray(x.projects)) process.exit(1)'
+          curl -fsS 'http://127.0.0.1:3210/v1/conversations?limit=5' >/tmp/webchat-conversations.json
+          node -e 'const x=JSON.parse(require("fs").readFileSync("/tmp/webchat-conversations.json")); if(!Array.isArray(x.items)) process.exit(1)'
+      - name: Authenticated generation smoke
+        working-directory: /home/agent/server
+        run: npm run doctor:live

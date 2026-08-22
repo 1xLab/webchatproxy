@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { GatewayRuntime } from "../lib/gateway-runtime.mjs";
 
-test("persisted account state survives gateway restart and informs jobs", async () => {
+test("persisted account state is observable but never injected into ChatGPT prompts", async () => {
   const root = await mkdtemp(join(tmpdir(), "webchat-account-"));
   const runtimeDir = join(root, "runtime");
   await mkdir(runtimeDir, { recursive: true });
@@ -15,11 +15,10 @@ test("persisted account state survives gateway restart and informs jobs", async 
     plan: "free",
     subscription_active: false,
     classification: "free",
-    confidence: "inferred",
-    evidence: "authenticated_without_paid_plan_marker",
+    confidence: "legacy",
+    evidence: "legacy_persisted_state",
     observed_at: "2026-08-21T18:00:00.000Z",
-    source: "persistent_detector",
-    browser_status: "ready",
+    source: "legacy",
   }, null, 2)}\n`, "utf8");
 
   const runtime = new GatewayRuntime({
@@ -27,7 +26,7 @@ test("persisted account state survives gateway restart and informs jobs", async 
     env: {
       WEBCHAT_RUNTIME_DIR: runtimeDir,
       WEBCHAT_PROFILE_DIR: join(root, "browser-profile"),
-      WEBCHAT_DISABLE_BROWSER_START: "1",
+      WEBCHAT_ENGINE_AUTOSTART: "0",
     },
   });
 
@@ -35,16 +34,14 @@ test("persisted account state survives gateway restart and informs jobs", async 
     await runtime.init();
     assert.equal(runtime.account().authenticated, true);
     assert.equal(runtime.account().plan, "free");
-    assert.equal(runtime.account().subscription_active, false);
 
     const payload = await runtime.prepareJobPayload({
-      model: "chatgpt-web",
+      model: "auto",
       messages: [{ role: "user", content: "qual meu plano?" }],
     });
-    assert.equal(payload.messages[0].role, "system");
-    assert.match(payload.messages[0].content, /plan=free/);
-    assert.match(payload.messages[0].content, /subscription_active=false/);
-    assert.equal(payload.messages[1].content, "qual meu plano?");
+
+    assert.deepEqual(payload.messages, [{ role: "user", content: "qual meu plano?" }]);
+    assert.equal(payload.messages.some((message) => message.role === "system"), false);
   } finally {
     await runtime.close().catch(() => {});
     await rm(root, { recursive: true, force: true });

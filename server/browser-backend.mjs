@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
 
@@ -10,12 +10,28 @@ const CHATGPT_URL = "https://chatgpt.com/";
 const COMPOSER = "#prompt-textarea";
 const ASSISTANT = '[data-message-author-role="assistant"]';
 const STOP = '[data-testid="stop-button"], button[aria-label*="Stop" i]';
+const FILE_INPUT = 'input[type="file"]';
 const POLL_INTERVAL = 1500;
 const STABLE_POLLS = 2;
 const CONVERSATION_ID_WAIT_MS = 5000;
+const ATTACHMENT_WAIT_MS = 30000;
 
 export function conversationIdFromUrl(url = "") {
   return String(url).match(/\/c\/([A-Za-z0-9_-]+)/)?.[1] || null;
+}
+
+export function safeChatGptProjectUrl(value, projectId = null) {
+  const fallbackId = String(projectId || "").match(/^g-p-[A-Za-z0-9_-]+$/)?.[0] || null;
+  if (value) {
+    try {
+      const url = new URL(String(value));
+      if (url.protocol === "https:" && ["chatgpt.com", "www.chatgpt.com"].includes(url.hostname)) {
+        const id = url.pathname.match(/\bg-p-[A-Za-z0-9_-]+\b/)?.[0];
+        if (id) return url.toString();
+      }
+    } catch {}
+  }
+  return fallbackId ? `https://chatgpt.com/g/${fallbackId}/project` : null;
 }
 
 export class BrowserBackend {
@@ -30,6 +46,7 @@ export class BrowserBackend {
     this.networkComplete = false;
     this.currentRequestId = null;
     this.lastConversationId = null;
+    this.chatgptAccountId = null;
     this.progress = new Map();
   }
 
@@ -184,11 +201,24 @@ export class BrowserBackend {
     }
   }
 
-  async #ask(messages, { newConversation = true, timeout = 210_000, requestId = null, conversationId = null } = {}) {
+  async #ask(messages, {
+    newConversation = true,
+    timeout = 210_000,
+    requestId = null,
+    conversationId = null,
+    projectId = null,
+    projectUrl = null,
+    attachments = [],
+    reasoningEffort = null,
+  } = {}) {
     await this.start();
     const page = this.page;
+    const cleanConversationId = conversationId ? String(conversationId).replace(/[^A-Za-z0-9_-]/g, "") : null;
+    const cleanProjectId = projectId ? String(projectId).match(/^g-p-[A-Za-z0-9_-]+$/)?.[0] || null : null;
+    const targetProjectUrl = safeChatGptProjectUrl(projectUrl, cleanProjectId);
+
     this.currentRequestId = requestId;
-    this.lastConversationId = conversationId ? String(conversationId).replace(/[^A-Za-z0-9_-]/g, "") : null;
+    this.lastConversationId = cleanConversationId;
     if (requestId) {
       this.progress.set(requestId, {
         thinking: "",
@@ -202,17 +232,27 @@ export class BrowserBackend {
     this.lastThinkingText = "";
     this.networkComplete = false;
 
-    const startUrl = conversationId
-      ? `https://chatgpt.com/c/${String(conversationId).replace(/[^A-Za-z0-9_-]/g, "")}`
-      : CHATGPT_URL;
-    const wrongConversation = conversationId && !page.url().includes(`/c/${conversationId}`);
+    const startUrl = cleanConversationId
+      ? `https://chatgpt.com/c/${cleanConversationId}`
+      : targetProjectUrl || CHATGPT_URL;
+    const wrongConversation = cleanConversationId && !page.url().includes(`/c/${cleanConversationId}`);
+    const wrongProject = !cleanConversationId && cleanProjectId && !page.url().includes(cleanProjectId);
     const offChatGpt = !page.url().startsWith(CHATGPT_URL);
-    if (newConversation || offChatGpt || wrongConversation) {
+    if (newConversation || offChatGpt || wrongConversation || wrongProject) {
       await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(1200);
     }
     this.#rememberConversationId(conversationIdFromUrl(page.url()));
     await page.locator(COMPOSER).waitFor({ state: "visible", timeout: 30_000 });
+
+    if (reasoningEffort) {
+      console.log(`[browser] reasoning_effort requested=${String(reasoningEffort)} (selector control pending)`);
+    }
+
+    if (Array.isArray(attachments) && attachments.length) {
+      this.#markProgress(requestId, "anexando", "");
+      await this.#attachFiles(attachments);
+    }
 
     const prompt = buildPrompt(messages);
     if (!prompt) throw new Error("Empty prompt");
@@ -224,14 +264,10 @@ export class BrowserBackend {
         await page.evaluate((text) => window.chatgpt.send(text), prompt);
       } catch (error) {
         console.warn(`[browser] chatgpt.js send fallback: ${error.message}`);
-        const composer = page.locator(COMPOSER);
-        await composer.fill(prompt);
-        await composer.press("Enter");
+        await this.#sendComposerFallback(prompt);
       }
     } else {
-      const composer = page.locator(COMPOSER);
-      await composer.fill(prompt);
-      await composer.press("Enter");
+      await this.#sendComposerFallback(prompt);
     }
 
     const text = await this.#waitForCompletion(baseline, timeout);
@@ -239,9 +275,86 @@ export class BrowserBackend {
       this.#markProgress(requestId, "erro", "");
       throw new Error("No response captured");
     }
-    if (!conversationId) await this.#waitForConversationId(CONVERSATION_ID_WAIT_MS);
+    if (!cleanConversationId) await this.#waitForConversationId(CONVERSATION_ID_WAIT_MS);
     this.#markProgress(requestId, "concluido", text);
     return text;
+  }
+
+  async #sendComposerFallback(prompt) {
+    const composer = this.page.locator(COMPOSER);
+    try {
+      await composer.fill(prompt);
+    } catch {
+      await composer.click();
+      await this.page.keyboard.insertText(prompt);
+    }
+    await composer.press("Enter");
+  }
+
+  async #attachFiles(filePaths) {
+    const paths = filePaths.map((path) => String(path || "")).filter(Boolean);
+    if (!paths.length) return;
+    let input = this.page.locator(FILE_INPUT).first();
+    if (await input.count() === 0) {
+      await this.#openAttachmentMenu();
+      input = this.page.locator(FILE_INPUT).first();
+    }
+    if (await input.count() === 0) throw new Error("ChatGPT file upload input not found");
+
+    const supportsMultiple = await input.evaluate((element) => element.hasAttribute("multiple")).catch(() => false);
+    if (supportsMultiple || paths.length === 1) {
+      await input.setInputFiles(supportsMultiple ? paths : paths[0]);
+      await this.#waitForAttachments(paths);
+      return;
+    }
+
+    for (const path of paths) {
+      input = this.page.locator(FILE_INPUT).first();
+      if (await input.count() === 0) {
+        await this.#openAttachmentMenu();
+        input = this.page.locator(FILE_INPUT).first();
+      }
+      if (await input.count() === 0) throw new Error(`ChatGPT file upload input disappeared before attaching ${basename(path)}`);
+      await input.setInputFiles(path);
+      await this.#waitForAttachments([path]);
+    }
+  }
+
+  async #openAttachmentMenu() {
+    const selectors = [
+      '[data-testid="composer-plus-btn"]',
+      'button[aria-label*="attach" i]',
+      'button[aria-label*="upload" i]',
+      'button[aria-label*="file" i]',
+      'button[aria-label*="add" i]',
+      'button[aria-label*="anex" i]',
+      'button[aria-label*="arquivo" i]',
+      'button[aria-label*="adjunt" i]',
+    ];
+    for (const selector of selectors) {
+      const button = this.page.locator(selector).first();
+      if (await button.count() && await button.isVisible().catch(() => false)) {
+        await button.click({ timeout: 3000 }).catch(() => {});
+        await this.page.waitForTimeout(300);
+        if (await this.page.locator(FILE_INPUT).count()) return;
+      }
+    }
+  }
+
+  async #waitForAttachments(paths) {
+    const names = paths.map((path) => basename(path));
+    const accepted = await this.page.waitForFunction((expected) => {
+      const body = document.body?.innerText || "";
+      return expected.every((name) => body.includes(name));
+    }, names, { timeout: ATTACHMENT_WAIT_MS }).then(() => true).catch(() => false);
+    if (!accepted) {
+      const selected = await this.page.locator(FILE_INPUT).first().evaluate((element) =>
+        Array.from(element.files || []).map((file) => file.name),
+      ).catch(() => []);
+      const missing = names.filter((name) => !selected.includes(name));
+      if (missing.length) throw new Error(`ChatGPT did not accept attachment(s): ${missing.join(", ")}`);
+      await this.page.waitForTimeout(1500);
+    }
   }
 
   async #waitForConversationId(waitMs) {
@@ -306,6 +419,15 @@ export class BrowserBackend {
   #observeNetwork(page) {
     page.on("framenavigated", (frame) => {
       if (frame === page.mainFrame()) this.#rememberConversationId(conversationIdFromUrl(frame.url()));
+    });
+    page.on("request", (request) => {
+      if (!request.url().includes("chatgpt.com/backend-api/")) return;
+      const headers = request.headers();
+      const accountId = headers["chatgpt-account-id"] || headers["ChatGPT-Account-Id"];
+      if (accountId && !this.chatgptAccountId) {
+        this.chatgptAccountId = accountId;
+        console.log("[browser] ChatGPT account context observed");
+      }
     });
     page.on("websocket", (socket) => {
       socket.on("framereceived", (event) => this.#recordNetworkText(framePayload(event)));

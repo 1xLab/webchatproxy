@@ -1,5 +1,7 @@
 node_modules/
 server/node_modules/
+server/.venv-engine/
+server/engine/__pycache__/
 server/browser-profile/
 server/runtime/
 server/*.log

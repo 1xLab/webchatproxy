@@ -17,11 +17,11 @@ server.on("error", (error) => {
 });
 
 server.listen(port, host, () => {
-  runtime.journal.record("gateway_listening", { host, port, pid: process.pid });
+  runtime.journal.record("gateway_listening", { host, port, pid: process.pid, backend: "chatgpt-web2api" });
   console.log(`[gateway] listening on http://${host}:${port}`);
-  runtime.startBrowser().catch((error) => {
-    runtime.journal.record("browser_start_failed", { error: error.message }, "error");
-    console.error(`[browser] startup failed: ${error.message}`);
+  runtime.startEngine().catch((error) => {
+    runtime.journal.record("engine_start_failed", { error: error.message, code: error.code || null }, "error");
+    console.error(`[engine] startup failed: ${error.message}`);
   });
 });
 

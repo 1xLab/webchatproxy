@@ -1,24 +1,11 @@
 import crypto from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { BrowserBackend } from "../browser-backend.mjs";
-import { ChatGptControl } from "./chatgpt-control.mjs";
 import { EventJournal } from "./event-journal.mjs";
 import { FileStore } from "./file-store.mjs";
 import { JobManager } from "./job-manager.mjs";
 import { ResourceCatalog } from "./resource-catalog.mjs";
-import {
-  doctorReport,
-  domSnapshot,
-  inspectBrowser,
-  restartBrowser,
-  saveDiagnosticBundle,
-  screenshotBuffer,
-} from "./diagnostics.mjs";
-
-const ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]';
-const STOP_SELECTOR = '[data-testid="stop-button"], button[aria-label*="Stop" i]';
-const DONE_SELECTOR = '[data-testid="copy-turn-action-button"]';
+import { Web2ApiEngine } from "./web2api-engine.mjs";
 
 function anonymousAccount() {
   return {
@@ -27,10 +14,17 @@ function anonymousAccount() {
     subscription_active: false,
     classification: "unknown",
     confidence: "none",
-    evidence: "not_observed",
+    evidence: "engine_not_connected",
     observed_at: null,
-    source: "persistent_detector",
+    source: "chatgpt-web2api",
   };
+}
+
+function unsupported(message, code = "ENGINE_DEBUG_UNSUPPORTED") {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 501;
+  return error;
 }
 
 export class GatewayRuntime {
@@ -46,14 +40,15 @@ export class GatewayRuntime {
       headless: env.WEBCHAT_HEADLESS === "1" || env.REMOTE_IA_HEADLESS === "1",
       auth_enabled: !!env.WEBCHAT_API_TOKEN,
       cors_origin: env.WEBCHAT_CORS_ORIGIN || null,
-      backend: "playwright",
-      browser_start_disabled: env.WEBCHAT_DISABLE_BROWSER_START === "1",
-      chatgpt_account_id: env.WEBCHAT_CHATGPT_ACCOUNT_ID || null,
+      backend: "chatgpt-web2api",
+      engine_url: env.WEBCHAT_ENGINE_URL || `http://${env.WEBCHAT_ENGINE_HOST || "127.0.0.1"}:${Number(env.WEBCHAT_ENGINE_PORT || 3211)}`,
+      engine_cdp_port: Number(env.WEBCHAT_ENGINE_CDP_PORT || 9222),
       upload_max_bytes: Math.max(1024, Number(env.WEBCHAT_UPLOAD_MAX_BYTES || 50 * 1024 * 1024)),
       upload_retention_days: Math.max(1, Number(env.WEBCHAT_UPLOAD_RETENTION_DAYS || 2)),
     });
     this.apiToken = env.WEBCHAT_API_TOKEN || "";
     this.journal = null;
+    this.engine = null;
     this.browser = null;
     this.control = null;
     this.catalog = null;
@@ -79,17 +74,18 @@ export class GatewayRuntime {
       maxBytes: this.config.upload_max_bytes,
       retentionDays: this.config.upload_retention_days,
     }).init();
-    this.browser = new BrowserBackend({
+    this.engine = new Web2ApiEngine({
+      baseDir: this.baseDir,
+      runtimeDir: this.config.runtime_dir,
       profileDir: this.config.profile_dir,
       headless: this.config.headless,
-    });
-    this.control = new ChatGptControl({
-      backend: this.browser,
       journal: this.journal,
-      accountId: this.config.chatgpt_account_id,
+      env: this.env,
     });
+    this.browser = this.engine;
+    this.control = this.engine;
     this.jobs = new JobManager({
-      backend: this.browser,
+      backend: this.engine,
       journal: this.journal,
       runtimeDir: this.config.runtime_dir,
       fileStore: this.fileStore,
@@ -100,22 +96,21 @@ export class GatewayRuntime {
   }
 
   assertReady() {
-    if (!this.initialized || !this.browser || !this.control || !this.catalog || !this.fileStore || !this.jobs || !this.journal) {
+    if (!this.initialized || !this.engine || !this.catalog || !this.fileStore || !this.jobs || !this.journal) {
       throw new Error("gateway_runtime_not_initialized");
     }
   }
 
   health() {
     this.assertReady();
+    const engine = this.engine.snapshot();
     return {
-      status: "ok",
+      status: engine.status === "broken" ? "degraded" : "ok",
       service: "webchat-gateway",
+      backend: "chatgpt-web2api",
       pid: process.pid,
       uptime_seconds: Math.floor(process.uptime()),
-      browser: {
-        running: !!this.browser.context,
-        page_ready: !!this.browser.page,
-      },
+      engine,
       account: this.account(),
       catalog: { projects: this.catalog.listProjects().length },
       jobs: this.jobs.stats(),
@@ -128,45 +123,82 @@ export class GatewayRuntime {
   }
 
   async startBrowser() {
+    return this.startEngine();
+  }
+
+  async startEngine() {
     this.assertReady();
-    if (this.config.browser_start_disabled) {
-      this.journal.record("browser_start_skipped", { reason: "WEBCHAT_DISABLE_BROWSER_START=1" }, "warn");
-      return { skipped: true, account: this.account() };
-    }
-    await this.browser.start();
-    const state = await inspectBrowser(this.browser);
-    await this.#captureAccountState(state);
-    this.journal.record("browser_started", { status: state.status, url: state.url || null, account: this.account() });
-    return { ...state, persistent_account: this.account() };
+    const health = await this.engine.start();
+    await this.#captureEngineState(health);
+    this.journal.record("web2api_engine_started", { status: health?.status || null, account: this.account() });
+    return { ...health, account: this.account() };
   }
 
   async ready() {
     this.assertReady();
-    const state = await inspectBrowser(this.browser);
-    await this.#captureAccountState(state);
-    return { ...state, persistent_account: this.account() };
+    try {
+      const engine = await this.engine.health();
+      await this.#captureEngineState(engine);
+      return {
+        ready: engine.driver_connected === true,
+        status: engine.driver_connected === true ? "ready" : "auth_required",
+        engine,
+        persistent_account: this.account(),
+      };
+    } catch (error) {
+      return {
+        ready: false,
+        status: error.code === "ENGINE_AUTH_REQUIRED" ? "auth_required" : "engine_unavailable",
+        error: error.message,
+        code: error.code || null,
+        engine: this.engine.snapshot(),
+        persistent_account: this.account(),
+      };
+    }
   }
 
   async doctor() {
     this.assertReady();
-    const report = await doctorReport({
-      backend: this.browser,
-      jobs: this.jobs,
-      journal: this.journal,
-      config: this.config,
-    });
-    await this.#captureAccountState(report.browser);
-    return { ...report, account: this.account() };
+    const state = await this.ready();
+    let models = [];
+    let projects = [];
+    const errors = [];
+    if (state.ready) {
+      try { models = await this.engine.listModels(); } catch (error) { errors.push({ check: "models", error: error.message, code: error.code || null }); }
+      try { projects = await this.engine.listProjects(); } catch (error) { errors.push({ check: "projects", error: error.message, code: error.code || null }); }
+    }
+    return {
+      ok: state.ready && errors.length === 0,
+      service: "webchat-gateway",
+      backend: "chatgpt-web2api",
+      engine: state.engine,
+      account: this.account(),
+      checks: { models: models.length, projects: projects.length },
+      errors,
+      timestamp: new Date().toISOString(),
+    };
   }
 
-  async listProjects({ live = false, sync = true, all = true, cursor = null } = {}) {
+  async listModels() {
+    this.assertReady();
+    const models = await this.engine.listModels();
+    return models.map((model) => ({
+      id: model.id || model.slug || "auto",
+      object: "model",
+      created: 0,
+      owned_by: "chatgpt-web",
+      title: model.title || null,
+    }));
+  }
+
+  async listProjects({ live = false, sync = true } = {}) {
     this.assertReady();
     if (!live) return { source: "catalog", projects: this.catalog.listProjects() };
-    const result = await this.control.listProjects({ all, cursor });
+    const items = await this.engine.listProjects();
     const projects = sync
-      ? await this.catalog.syncProjects(result.items, { source: "live" })
-      : result.items;
-    return { source: "live", projects, cursor: result.cursor, pages: result.pages, raw_count: result.items.length };
+      ? await this.catalog.syncProjects(items, { source: "chatgpt-web2api" })
+      : items;
+    return { source: "live", projects, cursor: null, pages: 1, raw_count: items.length };
   }
 
   async importProjects(input) {
@@ -181,11 +213,12 @@ export class GatewayRuntime {
     let project = this.catalog.resolveProject(ref);
     if (project || !syncOnMiss) return project;
     try {
-      const live = await this.control.listProjects({ all: true });
-      await this.catalog.syncProjects(live.items, { source: "live" });
+      const live = await this.engine.listProjects();
+      await this.catalog.syncProjects(live, { source: "chatgpt-web2api" });
       project = this.catalog.resolveProject(ref);
     } catch (error) {
-      this.journal.record("project_live_resolve_failed", { ref: String(ref), error: error.message }, "warn");
+      this.journal.record("project_live_resolve_failed", { ref: String(ref), error: error.message, code: error.code || null }, "warn");
+      throw error;
     }
     return project;
   }
@@ -202,10 +235,9 @@ export class GatewayRuntime {
       }
       projectId = project.id;
     }
-    return this.control.listConversations({
+    return this.engine.listConversations({
       projectId,
       all: options.all === true,
-      cursor: options.cursor || null,
       offset: options.offset || 0,
       limit: options.limit || 50,
     });
@@ -213,7 +245,7 @@ export class GatewayRuntime {
 
   async getConversation(id) {
     this.assertReady();
-    return this.control.getConversation(id);
+    return this.engine.getConversation(id);
   }
 
   async listProjectFiles(ref) {
@@ -224,7 +256,7 @@ export class GatewayRuntime {
       error.code = "PROJECT_NOT_FOUND";
       throw error;
     }
-    const result = await this.control.listProjectFiles(project.id);
+    const result = await this.engine.listProjectFiles(project.id);
     return { project, ...result };
   }
 
@@ -265,76 +297,31 @@ export class GatewayRuntime {
     if (prepared.attachments != null) {
       if (!Array.isArray(prepared.attachments)) throw new Error("attachments must be an array of staged upload ids");
       await this.fileStore.resolveMany(prepared.attachments);
+      if (prepared.attachments.length) throw unsupported(
+        "message attachments are staged but the pinned ChatGPT-Web2API engine does not support attaching them to a turn",
+        "ENGINE_ATTACHMENTS_UNSUPPORTED",
+      );
     }
-
-    if (this.browser?.page && this.browser?.context) {
-      const state = await inspectBrowser(this.browser).catch(() => null);
-      if (state) await this.#captureAccountState(state);
-    }
-
-    const account = this.account();
-    if (!account.observed_at) return prepared;
-
-    const messages = Array.isArray(prepared.messages) ? [...prepared.messages] : [];
-    const context = [
-      "WebChat gateway account state (verified local control data; source of truth for this ChatGPT web account):",
-      `authenticated=${account.authenticated === true ? "true" : "false"}`,
-      `plan=${account.plan || "none"}`,
-      `subscription_active=${account.subscription_active === true ? "true" : "false"}`,
-      `observed_at=${account.observed_at}`,
-      "When asked about login, account plan or subscription, answer from this control data. If plan=free, state that there is no active paid subscription. Do not invent a paid plan.",
-    ].join("\n");
-
-    messages.unshift({ role: "system", content: context });
-    return { ...prepared, messages };
+    if (prepared.reasoning_effort) throw unsupported(
+      "reasoning_effort is not implemented by the pinned ChatGPT-Web2API engine",
+      "ENGINE_REASONING_EFFORT_UNSUPPORTED",
+    );
+    return prepared;
   }
 
   async dom() {
-    this.assertReady();
-    return domSnapshot(this.browser);
+    throw unsupported("DOM debug is disabled: ChatGPT-Web2API owns the browser/CDP runtime");
   }
 
   async debugSnapshot() {
     this.assertReady();
-    const runningId = this.jobs.stats().running || null;
-    const progress = runningId ? this.browser.progressOf?.(runningId) || null : null;
-    const page = this.browser.page;
-    let dom = null;
-    if (page) {
-      dom = await page.evaluate(({ assistant, stop, done }) => {
-        const assistants = [...document.querySelectorAll(assistant)];
-        const latest = assistants.at(-1);
-        return {
-          assistant_count: assistants.length,
-          latest_assistant_length: (latest?.innerText || "").trim().length,
-          stop_present: !!document.querySelector(stop),
-          done_present: !!document.querySelector(done),
-          composer_present: !!document.querySelector("#prompt-textarea"),
-          url: location.href,
-        };
-      }, { assistant: ASSISTANT_SELECTOR, stop: STOP_SELECTOR, done: DONE_SELECTOR }).catch((error) => ({ error: error.message }));
-    }
+    const engine = await this.engine.health().catch(() => this.engine.snapshot());
     return {
       service: "webchat-gateway",
+      backend: "chatgpt-web2api",
       timestamp: new Date().toISOString(),
       account: this.account(),
-      job: runningId ? this.jobs.get(runningId, { live: true }) : null,
-      browser: {
-        context_running: !!this.browser.context,
-        page_ready: !!page,
-        current_request_id: this.browser.currentRequestId || null,
-        network_complete: this.browser.networkComplete === true,
-        network_text_length: (this.browser.lastNetworkText || "").length,
-        thinking_text_length: (this.browser.lastThinkingText || "").length,
-        chatgpt_account_id_observed: !!this.browser.chatgptAccountId,
-        progress: progress ? {
-          status: progress.status || null,
-          content_length: (progress.content || "").length,
-          thinking_length: (progress.thinking || "").length,
-          updated_at: progress.updatedAt ? new Date(progress.updatedAt).toISOString() : null,
-        } : null,
-        dom,
-      },
+      engine,
       catalog: { projects: this.catalog.listProjects().length },
       jobs: this.jobs.stats(),
     };
@@ -346,15 +333,26 @@ export class GatewayRuntime {
   }
 
   async screenshot() {
-    this.assertReady();
-    return screenshotBuffer(this.browser);
+    throw unsupported("screenshot debug is disabled: the upstream engine owns Chrome");
   }
 
   async diagnosticBundle() {
     this.assertReady();
-    const bundle = await saveDiagnosticBundle(this.browser, this.config.runtime_dir, { account: this.account() });
-    this.journal.record("diagnostic_bundle_created", { screenshot: bundle.screenshot });
-    return bundle;
+    const dir = join(this.config.runtime_dir, "debug");
+    await mkdir(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const file = join(dir, `engine-${stamp}.json`);
+    const payload = {
+      created_at: new Date().toISOString(),
+      backend: "chatgpt-web2api",
+      engine: await this.engine.health().catch(() => this.engine.snapshot()),
+      account: this.account(),
+      jobs: this.jobs.stats(),
+      recent_events: this.events({ limit: 100 }),
+    };
+    await writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    this.journal.record("diagnostic_bundle_created", { file });
+    return { file, backend: "chatgpt-web2api" };
   }
 
   async restartBrowser() {
@@ -366,10 +364,9 @@ export class GatewayRuntime {
       error.jobId = running;
       throw error;
     }
-    this.journal.record("browser_restart_requested");
-    const state = await restartBrowser(this.browser);
-    await this.#captureAccountState(state);
-    this.journal.record("browser_restarted", { status: state.status, url: state.url || null, account: this.account() });
+    this.journal.record("engine_restart_requested");
+    const state = await this.engine.restart();
+    await this.#captureEngineState(state);
     return { ...state, persistent_account: this.account() };
   }
 
@@ -377,7 +374,7 @@ export class GatewayRuntime {
     this.assertReady();
     const id = `diag_${crypto.randomUUID()}`;
     const payload = await this.prepareJobPayload({
-      model: "chatgpt-web",
+      model: "auto",
       messages: [{ role: "user", content: "Responda apenas: WEBCHAT_OK" }],
       new_conversation: true,
       timeout: Number(this.env.WEBCHAT_SMOKE_TIMEOUT || 120000),
@@ -389,7 +386,7 @@ export class GatewayRuntime {
 
   async close() {
     if (!this.initialized) return;
-    try { await this.browser?.context?.close?.(); } catch {}
+    try { await this.engine?.close?.(); } catch {}
     await this.journal?.flush?.();
   }
 
@@ -400,32 +397,21 @@ export class GatewayRuntime {
     } catch {}
   }
 
-  async #captureAccountState(browserState = {}) {
-    const account = browserState?.account;
-    const verifiableAuthenticated = account?.authenticated === true && ["ready", "degraded"].includes(browserState.status);
-    const verifiableLoggedOut = browserState.status === "auth_required" && browserState.login_present === true;
-    if (!verifiableAuthenticated && !verifiableLoggedOut) return this.account();
-
+  async #captureEngineState(engineState = {}) {
     const next = {
-      ...anonymousAccount(),
-      ...account,
+      ...this.accountState,
+      authenticated: engineState.driver_connected === true,
+      plan: null,
+      subscription_active: false,
+      classification: engineState.driver_connected === true ? "authenticated" : "unknown",
+      confidence: engineState.driver_connected === true ? "engine" : "none",
+      evidence: engineState.driver_connected === true ? "chatgpt_web2api_driver_connected" : "engine_not_connected",
       observed_at: new Date().toISOString(),
-      source: "persistent_detector",
-      browser_status: browserState.status,
+      source: "chatgpt-web2api",
     };
-    if (JSON.stringify(next) === JSON.stringify(this.accountState)) return this.account();
-
     this.accountState = next;
     const temp = `${this.accountStateFile}.${process.pid}.tmp`;
     await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
     await rename(temp, this.accountStateFile);
-    this.journal?.record("account_state_persisted", {
-      authenticated: next.authenticated,
-      plan: next.plan,
-      subscription_active: next.subscription_active,
-      confidence: next.confidence,
-      evidence: next.evidence,
-    });
-    return this.account();
   }
 }

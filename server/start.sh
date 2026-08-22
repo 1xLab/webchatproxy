@@ -7,8 +7,7 @@ cd "$(dirname "$0")"
 CORE_DIR="$(pwd -P)"
 
 # The Node/Playwright core, browser profile and runtime must never run from a
-# public document root. The recommended production tree is
-# /home/<user>/webchatproxy/server.
+# public document root. Existing production service layout is /home/<user>/server.
 reject_public_webroot() {
   local label="$1"
   local path="$2"

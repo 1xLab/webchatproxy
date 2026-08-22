@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# WebChat Gateway — standalone Playwright service (no extension).
+# webchatproxy — standalone Playwright service.
 # Usage: ./start.sh [start|stop|restart|status|doctor|doctor-live|browser-install|browser-auth|logs]
 set -euo pipefail
 
 cd "$(dirname "$0")"
 CORE_DIR="$(pwd -P)"
 
-# Filesystem boundary: the Node/Playwright core must never run from a public
-# document root. In production the canonical layout is /home/agent/server for
-# the gateway core and /home/agent/public_html for the Laravel application.
+# The Node/Playwright core, browser profile and runtime must never run from a
+# public document root. The recommended production tree is
+# /home/<user>/webchatproxy/server.
 reject_public_webroot() {
   local label="$1"
   local path="$2"
@@ -17,7 +17,7 @@ reject_public_webroot() {
   case "$resolved" in
     */public_html|*/public_html/*)
       echo "ERROR: $label must not live under public_html: $resolved"
-      echo "Keep gateway/core under /home/agent (canonical production path: /home/agent/server)."
+      echo "Keep the proxy core, runtime and browser profile outside any document root."
       return 78
       ;;
   esac
@@ -78,10 +78,7 @@ ensure_nofile_limit() {
   local soft hard
   soft="$(ulimit -Sn)"
   hard="$(ulimit -Hn)"
-
-  if [ "$soft" = "unlimited" ]; then
-    return 0
-  fi
+  if [ "$soft" = "unlimited" ]; then return 0; fi
 
   if [ "$hard" != "unlimited" ] && [ "$hard" -lt "$NOFILE_TARGET" ]; then
     echo "ERROR: RLIMIT_NOFILE too low for Chrome: soft=$soft hard=$hard required=$NOFILE_TARGET"
@@ -107,12 +104,10 @@ ensure_dependencies() {
 }
 
 ensure_headed_runtime() {
-  if [ "$HEADLESS" = "1" ] || [ -n "${DISPLAY:-}" ]; then
-    return 0
-  fi
+  if [ "$HEADLESS" = "1" ] || [ -n "${DISPLAY:-}" ]; then return 0; fi
   if ! command -v xvfb-run >/dev/null 2>&1; then
     echo "ERROR: headed Chromium requires xvfb-run when DISPLAY is not set."
-    echo "Install xorg-x11-server-Xvfb or set WEBCHAT_HEADLESS=1 explicitly."
+    echo "Install Xvfb or set WEBCHAT_HEADLESS=1 explicitly."
     return 1
   fi
   if ! command -v setsid >/dev/null 2>&1; then
@@ -123,7 +118,7 @@ ensure_headed_runtime() {
 
 install_browser() {
   ensure_dependencies
-  echo "Installing Playwright Chromium for the current user (no sudo/root)..."
+  echo "Installing Playwright Chromium for the current user..."
   echo "channel=$BROWSER_LABEL headless=$HEADLESS"
   npx playwright install chromium
   echo
@@ -134,10 +129,7 @@ stop_service() {
   if is_running; then
     local pid
     pid="$(cat "$PID_FILE")"
-    echo "Stopping WebChat Gateway process group (PGID $pid)..."
-    # start_service launches the service under setsid, so the recorded PID is
-    # also the process-group id. Killing the group terminates Node, Chromium,
-    # xvfb-run and its Xvfb child together.
+    echo "Stopping webchatproxy process group (PGID $pid)..."
     kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
     for _ in {1..60}; do
       kill -0 "$pid" 2>/dev/null || break
@@ -152,7 +144,7 @@ stop_service() {
 
 start_service() {
   if is_running; then
-    echo "WebChat Gateway already running (PID $(cat "$PID_FILE")) on port $WEBCHAT_PORT"
+    echo "webchatproxy already running (PID $(cat "$PID_FILE")) on port $WEBCHAT_PORT"
     return 0
   fi
   if port_busy; then
@@ -171,7 +163,7 @@ start_service() {
   : > "$XVFB_LOG_FILE"
   rm -f "$DISPLAY_FILE"
 
-  echo "Starting WebChat Gateway on ${HOST}:${WEBCHAT_PORT}..."
+  echo "Starting webchatproxy on ${HOST}:${WEBCHAT_PORT}..."
   echo "Core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR nofile=$(ulimit -Sn)"
 
   if [ "$HEADLESS" = "1" ]; then
@@ -216,7 +208,7 @@ start_service() {
     if curl -fsS --max-time 1 "$HEALTH_URL" >/dev/null 2>&1; then
       local active_display="none"
       if [ -s "$DISPLAY_FILE" ]; then active_display="$(cat "$DISPLAY_FILE")"; fi
-      echo "WebChat Gateway process ready: $HEALTH_URL (PID $pid)"
+      echo "webchatproxy ready: $HEALTH_URL (PID $pid)"
       echo "Runtime headless=$HEADLESS display=$active_display nofile=$(ulimit -Sn)"
       node doctor.mjs || true
       return 0
@@ -286,7 +278,7 @@ cmd="${1:-start}"
 case "$cmd" in
   start) start_service ;;
   restart) stop_service; start_service ;;
-  stop) stop_service; echo "WebChat Gateway stopped." ;;
+  stop) stop_service; echo "webchatproxy stopped." ;;
   status) status_service ;;
   doctor) ensure_dependencies; node doctor.mjs ;;
   doctor-live) ensure_dependencies; node doctor.mjs --live ;;

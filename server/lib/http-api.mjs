@@ -85,6 +85,9 @@ function errorStatus(error) {
   if (error.code === "PROJECT_NOT_FOUND" || error.code === "ENOENT") return 404;
   if (["INVALID_PROJECT_ID", "INVALID_CONVERSATION_ID"].includes(error.code)) return 400;
   if (error.code === "UPLOAD_TOO_LARGE") return 413;
+  if (["ENGINE_ATTACHMENTS_UNSUPPORTED", "ENGINE_REASONING_EFFORT_UNSUPPORTED", "ENGINE_DEBUG_UNSUPPORTED", "ENGINE_UNSUPPORTED"].includes(error.code) || error.status === 501) return 501;
+  if (["ENGINE_AUTH_REQUIRED", "ENGINE_UNAVAILABLE", "ENGINE_NOT_INSTALLED", "ENGINE_TIMEOUT"].includes(error.code)) return 503;
+  if (error.code === "ENGINE_UPSTREAM_ERROR") return 502;
   if (error.code === "CHATGPT_AUTH_REQUIRED") return 503;
   if (["CHATGPT_BACKEND_FORBIDDEN", "CHATGPT_BACKEND_ERROR", "CHATGPT_INVALID_JSON"].includes(error.code)) return 502;
   if (error.message === "invalid upload id") return 400;
@@ -129,7 +132,7 @@ export function createGatewayHttpServer(runtime) {
       if (req.method === "GET" && url.pathname === "/v1/models") {
         return json(res, 200, {
           object: "list",
-          data: [{ id: "chatgpt-web", object: "model", created: 1760000000, owned_by: "webchatproxy" }],
+          data: await runtime.listModels(),
         });
       }
 

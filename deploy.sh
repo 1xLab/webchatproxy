@@ -56,7 +56,12 @@ sync_public_html() {
     --exclude='.htaccess' \
     -e "ssh -o StrictHostKeyChecking=no" \
     "$SCRIPT_DIR/public_html/" "$REMOTE:$REMOTE_HOME/public_html/"
-  echo "==> Public_html directory synced."
+
+  # The Laravel module source is the only canonical WebUI asset. Always publish it
+  # after rsync as well, so the lightweight `sync` action cannot leave an old
+  # server-based app.js in public_html.
+  ssh -o StrictHostKeyChecking=no "$REMOTE" "mkdir -p '$REMOTE_HOME/public_html/modules/webui' && install -m 0644 '$REMOTE_HOME/sistema/Modules/WebUI/resources/js/app.js' '$REMOTE_HOME/public_html/modules/webui/app.js' && cmp -s '$REMOTE_HOME/sistema/Modules/WebUI/resources/js/app.js' '$REMOTE_HOME/public_html/modules/webui/app.js'"
+  echo "==> Public_html directory synced and WebUI asset verified."
 }
 
 run_deploy() {

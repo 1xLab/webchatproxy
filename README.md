@@ -2,7 +2,7 @@
 
 The **standalone Playwright browser automation gateway** for the WebChat system.
 
-## Standalone Architecture
+## Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────────────┐
@@ -19,26 +19,23 @@ ChatGPT session. It exposes a lightweight HTTP API that the Laravel web applicat
 
 Listening on: `http://127.0.0.1:3210`
 
-## Boundary Rules
+## Filesystem Boundary (Production)
 
-This repo must **not** be installed inside any document root. On production:
+On production servers, this repo must be outside the document root:
 
 ```
 /home/agent/
-├── webchatproxy/     ← this repo (Node core only — OUTSIDE webroot)
-│   ├── server/       
+├── webchatproxy/     ← this repo (Node/Playwright core)
+│   ├── server/
 │   │   ├── browser-profile/  ← persistent session (never in webroot)
 │   │   └── runtime/          ← jobs/logs/debug  (never in webroot)
-└── webagent/
-    └── public_html/  ← Laravel web app (webroot)
+├── webagent/
+│   └── public_html/  ← Laravel web app (document root)
 ```
 
 ## Complementary Repository
 
-The **user-facing Laravel web application** lives in [`1xLab/webagent`](https://github.com/1xLab/webagent).
-
-For user authentication, account management, IA provider configuration, and the chat UI,
-see the **webagent** repository.
+The **Laravel web application** lives in [`1xLab/webagent`](https://github.com/1xLab/webagent).
 
 ## Quick Start
 

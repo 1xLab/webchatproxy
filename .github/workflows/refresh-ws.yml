@@ -1,0 +1,42 @@
+name: refresh-ws-dependency
+
+on:
+  push:
+    branches:
+      - feature/chatgpt-control-plane
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/chatgpt-control-plane
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Regenerate lockfile with fixed ws
+        working-directory: server
+        run: |
+          set -euo pipefail
+          npm install --save-exact ws@8.21.3
+          npm audit --omit=dev --audit-level=high
+          npm test
+      - name: Commit regenerated dependency metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- server/package.json server/package-lock.json; then
+            echo 'Dependency metadata already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/package.json server/package-lock.json
+          git commit -m 'fix: update ws beyond high-severity advisories'
+          git push origin HEAD:feature/chatgpt-control-plane

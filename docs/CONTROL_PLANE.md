@@ -2,170 +2,118 @@
 
 ## Goal
 
-`webchatproxy` should control a persistent ChatGPT Web account as a resource graph, not merely as a prompt textbox.
+`webchatproxy` exposes a stable API over an authenticated ChatGPT Web account. It is a proxy core for API consumption, not a UX product.
 
-The proxy therefore models these remote entities explicitly:
+Remote resources are modeled as:
 
 ```text
 ChatGPT account
-  |
   +-- Projects (g-p-*)
-  |     |
-  |     +-- project metadata/instructions/memory
-  |     +-- project source-file metadata
+  |     +-- Project metadata
+  |     +-- Project file metadata
   |     +-- conversations
-  |
   +-- global conversations
-  |
-  +-- conversation message trees
+  +-- conversation history
 ```
 
-Clients interact with stable proxy API fields such as `project`, `project_id`, `conversation_id` and staged attachment IDs. They do not need to know the ChatGPT sidebar layout.
+Clients target resources with `project`, `project_id` and `conversation_id`; they do not need to know ChatGPT DOM or internal endpoint details.
 
-## Hybrid browser strategy
+## Engine architecture
 
-### Read plane
-
-Project lists, project metadata, conversation lists and full conversation history are read through authenticated ChatGPT Web backend GET requests executed inside the persistent Chromium context.
+The normal browser owner is the pinned MIT `ChatGPT-Web2API` engine.
 
 ```text
-API request
+API client
    |
    v
-ChatGptControl
+webchatproxy :3210
    |
-   | page.evaluate(fetch)
-   v
-logged-in ChatGPT origin
+   +-- auth / jobs / aliases / staging / diagnostics
    |
    v
-/backend-api/*
+Web2ApiEngine
+   |
+   v
+internal bridge :3211 (loopback only)
+   |
+   v
+ChatGPT-Web2API
+   |
+   v
+Chrome/CDP + persistent browser-profile
+   |
+   v
+chatgpt.com
 ```
 
-The access token obtained from `/api/auth/session` is used only inside browser JavaScript and is never returned to Node clients, persisted by the proxy or exposed through diagnostics.
+The former custom `ChatGptControl` implementation was removed. `webchatproxy` does not maintain a parallel JavaScript implementation of ChatGPT `/backend-api/*` reads.
 
-Observed useful read endpoints include:
+The upstream engine owns session/token handling, CDP lifecycle, model discovery/selection, Projects, conversations, Project-file metadata, chat navigation, retries, locks, breakers and ChatGPT Web drift handling.
 
-```text
-GET /backend-api/gizmos/snorlax/sidebar
-GET /backend-api/gizmos/{project_id}
-GET /backend-api/gizmos/{project_id}/conversations
-GET /backend-api/conversations
-GET /backend-api/conversation/{conversation_id}
-```
-
-These are ChatGPT Web implementation details, not a public OpenAI API contract. They can change. The proxy owns adaptation and diagnostics for that drift.
-
-### Action plane
-
-Actions likely to encounter ChatGPT anti-bot/write protections are executed through the real UI:
-
-```text
-project/chat target
-      |
-      v
-Playwright direct navigation
-      |
-      +-- setInputFiles for staged attachments
-      +-- real composer send
-      |
-      v
-ChatGPT frontend
-```
-
-The browser frontend remains responsible for whatever current challenges/tokens are needed for a legitimate logged-in interactive send.
+MCP is not exposed as part of this product. The public contract remains HTTP `/v1/*`.
 
 ## Project catalog
 
-The local catalog is operational metadata, not a copy of ChatGPT data.
-
-Location:
+Local operational metadata is stored under:
 
 ```text
 server/runtime/catalog/projects.json
 ```
 
-It stores:
+It stores ChatGPT Project IDs, display names, administrator aliases and observed metadata. Imports merge by Project ID; live sync enriches the catalog while retaining administrator aliases.
 
-- ChatGPT `g-p-*` project ID;
-- display name;
-- imported aliases;
-- known project URL / `short_url`;
-- workspace ID when observed;
-- project instructions/memory metadata when observed;
-- project file metadata when observed;
-- import/live-observation timestamps.
-
-Resolution order favors known URL/`short_url`/aliases, then direct project ID. This is important because ChatGPT project `short_url` values may contain a human-readable suffix after the project identifier.
-
-### Import formats
-
-Array:
-
-```json
-{
-  "projects": [
-    {"id":"g-p-abc", "name":"Alpha", "aliases":["a"]}
-  ]
-}
-```
-
-Admin map:
+Example:
 
 ```json
 {
   "projects": {
-    "alpha": "g-p-abc",
-    "beta": {
-      "id":"g-p-def",
-      "aliases":["customer-b"]
+    "alpha": {
+      "id": "g-p-abc",
+      "aliases": ["customer-a"]
     }
   }
 }
 ```
 
-Imports merge by project ID. A later live sync enriches metadata without intentionally discarding administrator aliases.
+## Targeting chats
 
-## Targeting a chat
-
-A job can target exactly one of the following logical modes.
-
-### New global chat
+New global chat:
 
 ```json
 {
-  "messages":[{"role":"user","content":"..."}],
-  "new_conversation":true
+  "model": "auto",
+  "messages": [{"role":"user","content":"..."}],
+  "new_conversation": true
 }
 ```
 
-### New chat inside a Project
+New Project chat:
 
 ```json
 {
-  "project":"alpha",
-  "messages":[{"role":"user","content":"..."}],
-  "new_conversation":true
+  "model": "auto",
+  "project": "alpha",
+  "messages": [{"role":"user","content":"..."}],
+  "new_conversation": true
 }
 ```
 
-The catalog resolves `alpha` to a project ID/URL and Playwright navigates directly to the project URL. Sidebar discovery is unnecessary on the send path.
-
-### Continue an existing chat
+Continue an existing chat:
 
 ```json
 {
-  "conversation_id":"...",
-  "messages":[{"role":"user","content":"..."}],
-  "new_conversation":false
+  "model": "auto",
+  "conversation_id": "...",
+  "messages": [{"role":"user","content":"..."}],
+  "new_conversation": false
 }
 ```
 
-A known conversation ID is authoritative. The proxy navigates directly to that chat and continues it.
+Project aliases are resolved locally to authoritative `g-p-*` IDs before the engine call.
 
-## Attachment staging
+## File staging and current attachment boundary
 
-Client filesystem paths must never be accepted as remote API paths. A client first streams a binary object to:
+Clients can stream binary files to:
 
 ```text
 POST /v1/files
@@ -174,36 +122,18 @@ Content-Type: application/pdf
 <body = raw bytes>
 ```
 
-The proxy stores it under:
+Files are stored under `runtime/uploads/upl_<uuid>/` with SHA-256, size, MIME and creation metadata. Public jobs expose staging IDs, never server filesystem paths.
 
-```text
-server/runtime/uploads/upl_<uuid>/
-```
+The pinned ChatGPT-Web2API engine does not currently expose a safe per-message attachment operation. Therefore a chat request containing `attachments` returns HTTP 501. This is deliberate fail-closed behavior: the proxy must never send a prompt while silently dropping a requested document.
 
-Metadata includes SHA-256, byte size, MIME type and creation time. File mode is restricted and a retention cleanup removes old staged uploads.
-
-The job carries only staging IDs:
-
-```json
-"attachments": ["upl_..."]
-```
-
-Only immediately before browser execution does `JobManager` resolve those IDs to local absolute paths. Those paths are never part of the public job representation.
-
-Playwright then calls `setInputFiles`. The driver waits for evidence that ChatGPT accepted the filename before it sends the prompt. Failure to attach is fatal to the job; the proxy must never silently submit a prompt that was supposed to include a document.
-
-## Message attachments vs Project source files
-
-These are deliberately separate concepts:
-
-- **message attachment**: file attached to one prompt/chat turn;
-- **Project source file**: persistent file in the Project's configured knowledge/context.
-
-The current control-plane slice implements message attachments and read-only Project-file metadata. Persistent Project source-file mutation should be implemented as an explicit Project operation after its current ChatGPT UI/backend flow is verified. It must not be faked by sending a normal chat attachment.
+Project source-file mutation is a separate capability and is also not claimed as implemented. Project file metadata reads are supported.
 
 ## API surface
 
 ```text
+GET    /health
+GET    /ready
+GET    /v1/models
 GET    /v1/projects
 POST   /v1/projects/import
 POST   /v1/projects/sync
@@ -215,24 +145,27 @@ POST   /v1/files
 GET    /v1/files/{id}
 DELETE /v1/files/{id}
 POST   /v1/jobs
+GET    /v1/jobs
+GET    /v1/jobs/{id}
+GET    /v1/jobs/{id}/events
+DELETE /v1/jobs/{id}
 POST   /v1/chat/completions
 ```
 
-`GET /v1/projects` defaults to the local catalog for low latency. `?live=1` reads the authenticated ChatGPT account. `POST /v1/projects/sync` refreshes the catalog from live data.
+`GET /v1/projects` defaults to the local catalog. `GET /v1/projects?live=1` and `POST /v1/projects/sync` use the authenticated upstream engine.
 
 ## Reliability rules
 
-1. Never expose ChatGPT session cookies or access tokens through the proxy API.
-2. Never scrape the sidebar for data that can be read reliably as structured authenticated JSON.
-3. Never use an undocumented write endpoint when the normal frontend can safely perform the same operation and absorb its challenge flow.
-4. Never send a prompt after a requested attachment failed to attach.
-5. Never relocate `/home/agent/server`, its browser profile or runtime as part of this feature.
-6. Treat undocumented ChatGPT endpoints/selectors as adapters that can drift; contain them behind `ChatGptControl` and `BrowserBackend`.
-7. Keep admin aliases/local catalog separate from remote ChatGPT source-of-truth IDs.
+1. Keep ChatGPT session tokens/cookies out of the public API and diagnostics.
+2. Keep exactly one normal browser owner: ChatGPT-Web2API.
+3. Keep the internal engine bridge on loopback.
+4. Pin the upstream engine commit for reproducible deployments.
+5. Fail closed for unsupported controls such as attachments and `reasoning_effort`.
+6. Do not inject gateway account metadata into user prompts.
+7. Keep Project aliases/local catalog separate from ChatGPT source-of-truth IDs.
+8. Never relocate `/home/agent/server`, its `browser-profile` or `runtime` as part of this migration.
 
-## Deployment state
-
-Repository source remains `1xLab/webchatproxy`, while the existing production service remains under:
+## Production paths
 
 ```text
 /home/agent/server
@@ -240,11 +173,15 @@ Repository source remains `1xLab/webchatproxy`, while the existing production se
 /home/agent/server/runtime
 ```
 
-The control-plane state therefore lands under the existing runtime tree after deployment:
+Engine virtualenv:
+
+```text
+/home/agent/server/.venv-engine
+```
+
+Control-plane state remains under the existing runtime tree:
 
 ```text
 /home/agent/server/runtime/catalog/
 /home/agent/server/runtime/uploads/
 ```
-
-No service path migration is required.

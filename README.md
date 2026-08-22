@@ -73,14 +73,17 @@ server/runtime/
 
 ## Deployment
 
+The repository name is independent from the installed runtime path. Existing production services remain under `/home/agent/server`.
+
 ```bash
 WEBCHAT_DEPLOY_HOST=server.example \
-WEBCHAT_DEPLOY_USER=webchat \
-WEBCHAT_DEPLOY_ROOT=/opt/webchatproxy \
+WEBCHAT_DEPLOY_USER=agent \
 ./deploy.sh all
 ```
 
-`WEBCHAT_DEPLOY_ROOT` defaults to `/home/$WEBCHAT_DEPLOY_USER/webchatproxy`.
+By default, `server/` is synchronized to `/home/$WEBCHAT_DEPLOY_USER/server/`. Use `WEBCHAT_DEPLOY_HOME` only when the existing service home differs.
+
+`browser-profile/` and `runtime/` are excluded from rsync, so deploys preserve the authenticated browser session and operational state already present on the server.
 
 ## Development
 

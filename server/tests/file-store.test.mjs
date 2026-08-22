@@ -34,10 +34,10 @@ test("streams an attachment to runtime with hash and metadata", async (t) => {
 test("rejects oversized attachments and removes partial data", async (t) => {
   const runtimeDir = await mkdtemp(join(tmpdir(), "webchat-files-"));
   t.after(() => rm(runtimeDir, { recursive: true, force: true }));
-  const store = await new FileStore({ runtimeDir, maxBytes: 5 }).init();
+  const store = await new FileStore({ runtimeDir, maxBytes: 1024 }).init();
 
   await assert.rejects(
-    store.saveStream(Readable.from(Buffer.from("123456")), { filename: "too-big.bin" }),
+    store.saveStream(Readable.from(Buffer.alloc(1025, 1)), { filename: "too-big.bin" }),
     (error) => error.code === "UPLOAD_TOO_LARGE",
   );
 });

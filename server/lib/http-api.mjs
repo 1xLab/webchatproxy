@@ -40,7 +40,7 @@ function applyCors(req, res, originRule) {
   if (originRule === "*" || origin === originRule) {
     res.setHeader("Access-Control-Allow-Origin", originRule === "*" ? "*" : origin);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key, Prefer, X-Filename");
   }
 }
@@ -84,6 +84,7 @@ function errorStatus(error) {
   if (error.code === "JOB_RUNNING") return 409;
   if (error.code === "PROJECT_NOT_FOUND" || error.code === "ENOENT") return 404;
   if (["INVALID_PROJECT_ID", "INVALID_CONVERSATION_ID"].includes(error.code)) return 400;
+  if (error.code === "ENGINE_OPERATION_GATED" || error.status === 403) return 403;
   if (error.code === "UPLOAD_TOO_LARGE") return 413;
   if (["ENGINE_ATTACHMENTS_UNSUPPORTED", "ENGINE_REASONING_EFFORT_UNSUPPORTED", "ENGINE_DEBUG_UNSUPPORTED", "ENGINE_UNSUPPORTED"].includes(error.code) || error.status === 501) return 501;
   if (["ENGINE_AUTH_REQUIRED", "ENGINE_UNAVAILABLE", "ENGINE_NOT_INSTALLED", "ENGINE_TIMEOUT"].includes(error.code)) return 503;
@@ -130,10 +131,7 @@ export function createGatewayHttpServer(runtime) {
       }
 
       if (req.method === "GET" && url.pathname === "/v1/models") {
-        return json(res, 200, {
-          object: "list",
-          data: await runtime.listModels(),
-        });
+        return json(res, 200, { object: "list", data: await runtime.listModels() });
       }
 
       if (req.method === "GET" && url.pathname === "/v1/projects") {
@@ -145,12 +143,30 @@ export function createGatewayHttpServer(runtime) {
         }));
       }
 
+      if (req.method === "POST" && url.pathname === "/v1/projects") {
+        const result = await runtime.engine.createProject(await readJson(req));
+        try { await runtime.listProjects({ live: true, sync: true }); } catch {}
+        return json(res, 201, result);
+      }
+
       if (req.method === "POST" && url.pathname === "/v1/projects/import") {
         return json(res, 200, await runtime.importProjects(await readJson(req)));
       }
 
       if (req.method === "POST" && url.pathname === "/v1/projects/sync") {
         return json(res, 200, await runtime.listProjects({ live: true, sync: true, all: true }));
+      }
+
+      const projectInstructionsMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/instructions$/);
+      if (req.method === "PATCH" && projectInstructionsMatch) {
+        const project = await runtime.resolveProject(decodeURIComponent(projectInstructionsMatch[1]));
+        if (!project) {
+          const error = new Error(`project not found: ${decodeURIComponent(projectInstructionsMatch[1])}`);
+          error.code = "PROJECT_NOT_FOUND";
+          throw error;
+        }
+        const body = await readJson(req);
+        return json(res, 200, await runtime.engine.updateProjectInstructions(project.id, String(body.instructions || "")));
       }
 
       const projectConversationsMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/conversations$/);
@@ -169,6 +185,20 @@ export function createGatewayHttpServer(runtime) {
         return json(res, 200, await runtime.listProjectFiles(decodeURIComponent(projectFilesMatch[1])));
       }
 
+      const projectMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)$/);
+      if (req.method === "DELETE" && projectMatch) {
+        const ref = decodeURIComponent(projectMatch[1]);
+        const project = await runtime.resolveProject(ref);
+        if (!project) {
+          const error = new Error(`project not found: ${ref}`);
+          error.code = "PROJECT_NOT_FOUND";
+          throw error;
+        }
+        const result = await runtime.engine.deleteProject(project.id);
+        try { await runtime.listProjects({ live: true, sync: true }); } catch {}
+        return json(res, 200, result);
+      }
+
       if (req.method === "GET" && url.pathname === "/v1/conversations") {
         return json(res, 200, await runtime.listConversations({
           project: url.searchParams.get("project") || null,
@@ -180,9 +210,51 @@ export function createGatewayHttpServer(runtime) {
         }));
       }
 
+      const conversationArchiveMatch = url.pathname.match(/^\/v1\/conversations\/([^/]+)\/archive$/);
+      if (req.method === "POST" && conversationArchiveMatch) {
+        const body = await readJson(req);
+        return json(res, 200, await runtime.engine.archiveConversation(
+          decodeURIComponent(conversationArchiveMatch[1]),
+          body.archive !== false,
+        ));
+      }
+
       const conversationMatch = url.pathname.match(/^\/v1\/conversations\/([^/]+)$/);
-      if (req.method === "GET" && conversationMatch) {
-        return json(res, 200, { conversation: await runtime.getConversation(decodeURIComponent(conversationMatch[1])) });
+      if (conversationMatch) {
+        const id = decodeURIComponent(conversationMatch[1]);
+        if (req.method === "GET") {
+          return json(res, 200, { conversation: await runtime.getConversation(id) });
+        }
+        if (req.method === "DELETE") {
+          return json(res, 200, await runtime.engine.deleteConversation(id));
+        }
+      }
+
+      if (req.method === "GET" && url.pathname === "/v1/memories") {
+        return json(res, 200, await runtime.engine.listMemories());
+      }
+
+      if (req.method === "POST" && url.pathname === "/v1/memories") {
+        const body = await readJson(req);
+        return json(res, 201, await runtime.engine.createMemory(String(body.content || "")));
+      }
+
+      const memoryMatch = url.pathname.match(/^\/v1\/memories\/([^/]+)$/);
+      if (req.method === "DELETE" && memoryMatch) {
+        return json(res, 200, await runtime.engine.deleteMemory(decodeURIComponent(memoryMatch[1])));
+      }
+
+      if (req.method === "GET" && url.pathname === "/v1/gpts") {
+        return json(res, 200, await runtime.engine.listGpts());
+      }
+
+      const gptChatMatch = url.pathname.match(/^\/v1\/gpts\/([^/]+)\/chat$/);
+      if (req.method === "POST" && gptChatMatch) {
+        const body = await readJson(req);
+        return json(res, 200, await runtime.engine.chatWithGpt(
+          decodeURIComponent(gptChatMatch[1]),
+          String(body.message || ""),
+        ));
       }
 
       if (req.method === "POST" && url.pathname === "/v1/files") {
@@ -217,20 +289,14 @@ export function createGatewayHttpServer(runtime) {
       }
 
       if (req.method === "GET" && url.pathname === "/v1/jobs") {
-        return json(res, 200, {
-          jobs: jobs.list({ limit: url.searchParams.get("limit") || 100 }),
-          stats: jobs.stats(),
-        });
+        return json(res, 200, { jobs: jobs.list({ limit: url.searchParams.get("limit") || 100 }), stats: jobs.stats() });
       }
 
       const eventsMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)\/events$/);
       if (req.method === "GET" && eventsMatch) {
         const id = decodeURIComponent(eventsMatch[1]);
         if (!jobs.get(id, { live: false })) return json(res, 404, { error: "job_not_found", id });
-        return json(res, 200, {
-          id,
-          events: runtime.events({ jobId: id, limit: url.searchParams.get("limit") || 200 }),
-        });
+        return json(res, 200, { id, events: runtime.events({ jobId: id, limit: url.searchParams.get("limit") || 200 }) });
       }
 
       const jobMatch = url.pathname.match(/^\/v1\/jobs\/([^/]+)$/);
@@ -248,6 +314,9 @@ export function createGatewayHttpServer(runtime) {
 
       if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
         const payload = await runtime.prepareJobPayload(await readJson(req));
+        if (payload.stream === true) {
+          return runtime.engine.streamChat(payload, res, { timeout: payload.timeout || 210000 });
+        }
         const requestedId = req.headers["idempotency-key"] || payload.request_id || null;
         const created = await jobs.create(payload, { requestId: requestedId });
         const asyncRequested = payload.async === true || /respond-async/i.test(String(req.headers.prefer || ""));
@@ -260,55 +329,35 @@ export function createGatewayHttpServer(runtime) {
             status_url: `/v1/jobs/${encodeURIComponent(created.job.id)}`,
           }, { Location: `/v1/jobs/${encodeURIComponent(created.job.id)}` });
         }
-
         const timeout = Math.max(1000, Number(payload.timeout) || 210000) + 30000;
         const finished = await jobs.waitFor(created.job.id, timeout);
         if (finished.status !== "completed") {
-          return json(res, finished.status === "cancelled" ? 409 : 502, {
-            error: finished.error || finished.status,
-            job: finished,
-          });
+          return json(res, finished.status === "cancelled" ? 409 : 502, { error: finished.error || finished.status, job: finished });
         }
         return json(res, 200, { ...openAiResponse(finished), account: runtime.account() });
       }
 
-      if (req.method === "GET" && url.pathname === "/v1/debug/config") {
-        return json(res, 200, config);
-      }
-      if (req.method === "GET" && url.pathname === "/v1/debug/runtime") {
-        return json(res, 200, await runtime.debugSnapshot());
-      }
+      if (req.method === "GET" && url.pathname === "/v1/debug/config") return json(res, 200, config);
+      if (req.method === "GET" && url.pathname === "/v1/debug/runtime") return json(res, 200, await runtime.debugSnapshot());
       if (req.method === "GET" && url.pathname === "/v1/debug/doctor") {
         const report = await runtime.doctor();
         return json(res, report.ok ? 200 : 503, report);
       }
-      if (req.method === "GET" && url.pathname === "/v1/debug/dom") {
-        return json(res, 200, await runtime.dom());
-      }
+      if (req.method === "GET" && url.pathname === "/v1/debug/dom") return json(res, 200, await runtime.dom());
       if (req.method === "GET" && url.pathname === "/v1/debug/events") {
-        return json(res, 200, {
-          events: runtime.events({
-            limit: url.searchParams.get("limit") || 200,
-            jobId: url.searchParams.get("job_id") || null,
-            level: url.searchParams.get("level") || null,
-          }),
-        });
+        return json(res, 200, { events: runtime.events({
+          limit: url.searchParams.get("limit") || 200,
+          jobId: url.searchParams.get("job_id") || null,
+          level: url.searchParams.get("level") || null,
+        }) });
       }
       if (req.method === "GET" && url.pathname === "/v1/debug/screenshot") {
         const image = await runtime.screenshot();
-        res.writeHead(200, {
-          "Content-Type": "image/png",
-          "Content-Length": image.length,
-          "Cache-Control": "no-store",
-        });
+        res.writeHead(200, { "Content-Type": "image/png", "Content-Length": image.length, "Cache-Control": "no-store" });
         return res.end(image);
       }
-      if (req.method === "POST" && url.pathname === "/v1/debug/bundle") {
-        return json(res, 201, await runtime.diagnosticBundle());
-      }
-      if (req.method === "POST" && url.pathname === "/v1/debug/browser/restart") {
-        return json(res, 200, await runtime.restartBrowser());
-      }
+      if (req.method === "POST" && url.pathname === "/v1/debug/bundle") return json(res, 201, await runtime.diagnosticBundle());
+      if (req.method === "POST" && url.pathname === "/v1/debug/browser/restart") return json(res, 200, await runtime.restartBrowser());
       if (req.method === "POST" && url.pathname === "/v1/debug/smoke") {
         const smoke = await runtime.createSmokeJob();
         return json(res, 202, {
@@ -327,6 +376,10 @@ export function createGatewayHttpServer(runtime) {
         error: error.message,
         code: error.code || null,
       }, "error");
+      if (res.headersSent) {
+        try { res.end(); } catch {}
+        return;
+      }
       const payload = { error: error.message, code: error.code || null };
       if (error.code === "JOB_RUNNING") payload.id = error.jobId;
       if (error.status != null) payload.upstream_status = error.status;

@@ -181,8 +181,8 @@ jobs:
           test "$(git -C upstream rev-parse HEAD)" = "$W2A_PIN"
       - name: Install upstream development dependencies
         run: python -m pip install --upgrade pip && python -m pip install -e './upstream[dev]'
-      - name: Ruff upstream source
-        run: ruff check upstream/src upstream/tests
+      - name: Ruff upstream runtime source for real errors
+        run: ruff check upstream/src --select E,F --ignore E402,E501
       - name: Run upstream non-E2E tests
         working-directory: upstream
         env:

@@ -11,7 +11,8 @@
     "doctor": "node doctor.mjs",
     "doctor:live": "node doctor.mjs --live",
     "doctor:contract": "node doctor.mjs --contract",
-    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-backend.mjs && node --check browser-auth.mjs && node --check doctor.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/diagnostics.mjs",
+    "catalog": "node catalog.mjs",
+    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-backend.mjs && node --check browser-auth.mjs && node --check doctor.mjs && node --check catalog.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/diagnostics.mjs && node --check lib/chatgpt-control.mjs && node --check lib/resource-catalog.mjs && node --check lib/file-store.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {

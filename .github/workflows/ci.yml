@@ -23,21 +23,32 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: server/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: npm ci
       - run: npm run check
       - run: npm test
       - run: npm run doctor:contract
-      - run: bash -n start.sh remote_ia.sh
+      - run: bash -n start.sh remote_ia.sh engine/install.sh
       - name: Node core must not depend on a web application
         working-directory: .
         shell: bash
         run: |
           set -euo pipefail
           if grep -RInE 'public_html|/home/[^/]+/public_html|sistema/|webagent/' server \
-            --include='*.mjs' --include='*.js'; then
+            --include='*.mjs' --include='*.js' --include='*.py'; then
             echo 'ERROR: proxy core contains a dependency on an external web application'
             exit 1
           fi
+      - name: Custom ChatGPT backend implementation must stay removed
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e server/lib/chatgpt-control.mjs
+          ! grep -RIn 'ChatGptControl' server --include='*.mjs' --include='*.js'
+          grep -q 'chatgpt-web2api' server/requirements-engine.txt
       - name: start.sh rejects public webroot runtime paths
         shell: bash
         run: |
@@ -54,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf /tmp/webchatproxy-ci
-          WEBCHAT_DISABLE_BROWSER_START=1 \
+          WEBCHAT_ENGINE_AUTOSTART=0 \
           WEBCHAT_API_TOKEN=ci-secret \
           WEBCHAT_PORT=3218 \
           WEBCHAT_RUNTIME_DIR=/tmp/webchatproxy-ci \
@@ -66,10 +77,11 @@ jobs:
             sleep 0.25
           done
           grep -q '"service":"webchat-gateway"' /tmp/health.json
+          grep -q '"backend":"chatgpt-web2api"' /tmp/health.json
           CODE=$(curl -sS -o /tmp/unauthorized.json -w '%{http_code}' http://127.0.0.1:3218/v1/debug/config)
           test "$CODE" = "401"
           AUTH=(-H 'Authorization: Bearer ci-secret')
-          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/debug/config | grep -q '"browser_start_disabled":true'
+          curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/debug/config | grep -q '"backend":"chatgpt-web2api"'
           curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/debug/runtime | grep -q '"service":"webchat-gateway"'
           READY=$(curl -sS "${AUTH[@]}" -o /tmp/ready.json -w '%{http_code}' http://127.0.0.1:3218/ready)
           test "$READY" = "503"

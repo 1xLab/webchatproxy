@@ -2,8 +2,11 @@ import crypto from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BrowserBackend } from "../browser-backend.mjs";
+import { ChatGptControl } from "./chatgpt-control.mjs";
 import { EventJournal } from "./event-journal.mjs";
+import { FileStore } from "./file-store.mjs";
 import { JobManager } from "./job-manager.mjs";
+import { ResourceCatalog } from "./resource-catalog.mjs";
 import {
   doctorReport,
   domSnapshot,
@@ -45,10 +48,16 @@ export class GatewayRuntime {
       cors_origin: env.WEBCHAT_CORS_ORIGIN || null,
       backend: "playwright",
       browser_start_disabled: env.WEBCHAT_DISABLE_BROWSER_START === "1",
+      chatgpt_account_id: env.WEBCHAT_CHATGPT_ACCOUNT_ID || null,
+      upload_max_bytes: Math.max(1024, Number(env.WEBCHAT_UPLOAD_MAX_BYTES || 50 * 1024 * 1024)),
+      upload_retention_days: Math.max(1, Number(env.WEBCHAT_UPLOAD_RETENTION_DAYS || 2)),
     });
     this.apiToken = env.WEBCHAT_API_TOKEN || "";
     this.journal = null;
     this.browser = null;
+    this.control = null;
+    this.catalog = null;
+    this.fileStore = null;
     this.jobs = null;
     this.accountState = anonymousAccount();
     this.accountStateFile = join(this.config.runtime_dir, "account-state.json");
@@ -64,14 +73,26 @@ export class GatewayRuntime {
       maxMemory: Number(this.env.WEBCHAT_EVENT_MEMORY || 1500),
     });
     await this.journal.init();
+    this.catalog = await new ResourceCatalog({ runtimeDir: this.config.runtime_dir }).init();
+    this.fileStore = await new FileStore({
+      runtimeDir: this.config.runtime_dir,
+      maxBytes: this.config.upload_max_bytes,
+      retentionDays: this.config.upload_retention_days,
+    }).init();
     this.browser = new BrowserBackend({
       profileDir: this.config.profile_dir,
       headless: this.config.headless,
+    });
+    this.control = new ChatGptControl({
+      backend: this.browser,
+      journal: this.journal,
+      accountId: this.config.chatgpt_account_id,
     });
     this.jobs = new JobManager({
       backend: this.browser,
       journal: this.journal,
       runtimeDir: this.config.runtime_dir,
+      fileStore: this.fileStore,
     });
     await this.jobs.init();
     this.initialized = true;
@@ -79,7 +100,7 @@ export class GatewayRuntime {
   }
 
   assertReady() {
-    if (!this.initialized || !this.browser || !this.jobs || !this.journal) {
+    if (!this.initialized || !this.browser || !this.control || !this.catalog || !this.fileStore || !this.jobs || !this.journal) {
       throw new Error("gateway_runtime_not_initialized");
     }
   }
@@ -96,6 +117,7 @@ export class GatewayRuntime {
         page_ready: !!this.browser.page,
       },
       account: this.account(),
+      catalog: { projects: this.catalog.listProjects().length },
       jobs: this.jobs.stats(),
       port: this.config.port,
     };
@@ -137,17 +159,123 @@ export class GatewayRuntime {
     return { ...report, account: this.account() };
   }
 
+  async listProjects({ live = false, sync = true, all = true, cursor = null } = {}) {
+    this.assertReady();
+    if (!live) return { source: "catalog", projects: this.catalog.listProjects() };
+    const result = await this.control.listProjects({ all, cursor });
+    const projects = sync
+      ? await this.catalog.syncProjects(result.items, { source: "live" })
+      : result.items;
+    return { source: "live", projects, cursor: result.cursor, pages: result.pages, raw_count: result.items.length };
+  }
+
+  async importProjects(input) {
+    this.assertReady();
+    const result = await this.catalog.importProjects(input, { source: "admin_import" });
+    this.journal.record("project_catalog_imported", { imported: result.imported, total: result.total });
+    return result;
+  }
+
+  async resolveProject(ref, { syncOnMiss = true } = {}) {
+    this.assertReady();
+    let project = this.catalog.resolveProject(ref);
+    if (project || !syncOnMiss) return project;
+    try {
+      const live = await this.control.listProjects({ all: true });
+      await this.catalog.syncProjects(live.items, { source: "live" });
+      project = this.catalog.resolveProject(ref);
+    } catch (error) {
+      this.journal.record("project_live_resolve_failed", { ref: String(ref), error: error.message }, "warn");
+    }
+    return project;
+  }
+
+  async listConversations(options = {}) {
+    this.assertReady();
+    let projectId = options.project_id || options.projectId || null;
+    if (!projectId && options.project) {
+      const project = await this.resolveProject(options.project);
+      if (!project) {
+        const error = new Error(`project not found: ${options.project}`);
+        error.code = "PROJECT_NOT_FOUND";
+        throw error;
+      }
+      projectId = project.id;
+    }
+    return this.control.listConversations({
+      projectId,
+      all: options.all === true,
+      cursor: options.cursor || null,
+      offset: options.offset || 0,
+      limit: options.limit || 50,
+    });
+  }
+
+  async getConversation(id) {
+    this.assertReady();
+    return this.control.getConversation(id);
+  }
+
+  async listProjectFiles(ref) {
+    this.assertReady();
+    const project = await this.resolveProject(ref);
+    if (!project) {
+      const error = new Error(`project not found: ${ref}`);
+      error.code = "PROJECT_NOT_FOUND";
+      throw error;
+    }
+    const result = await this.control.listProjectFiles(project.id);
+    return { project, ...result };
+  }
+
+  async saveUpload(stream, metadata = {}) {
+    this.assertReady();
+    const upload = await this.fileStore.saveStream(stream, metadata);
+    this.journal.record("upload_staged", { id: upload.id, name: upload.name, size: upload.size, sha256: upload.sha256 });
+    return upload;
+  }
+
+  async getUpload(id) {
+    this.assertReady();
+    const { path: _path, ...metadata } = await this.fileStore.get(id);
+    return metadata;
+  }
+
+  async deleteUpload(id) {
+    this.assertReady();
+    const result = await this.fileStore.remove(id);
+    this.journal.record("upload_deleted", { id: result.id });
+    return result;
+  }
+
   async prepareJobPayload(payload = {}) {
     this.assertReady();
+    let prepared = { ...payload };
+    const projectRef = payload.project_id || payload.project || payload.project_url || null;
+    if (projectRef) {
+      const project = await this.resolveProject(projectRef);
+      if (!project) {
+        const error = new Error(`project not found: ${projectRef}`);
+        error.code = "PROJECT_NOT_FOUND";
+        throw error;
+      }
+      prepared = { ...prepared, project_id: project.id, project_url: project.url };
+    }
+
+    if (prepared.attachments != null) {
+      if (!Array.isArray(prepared.attachments)) throw new Error("attachments must be an array of staged upload ids");
+      await this.fileStore.resolveMany(prepared.attachments);
+    }
+
     if (this.browser?.page && this.browser?.context) {
       const state = await inspectBrowser(this.browser).catch(() => null);
       if (state) await this.#captureAccountState(state);
     }
 
     const account = this.account();
-    if (!account.observed_at) return payload;
+    if (!account.observed_at) return prepared;
 
-    const messages = Array.isArray(payload.messages) ? [...payload.messages] : [];
+    const messages = Array.isArray(prepared.messages) ? [...prepared.messages] : [];
     const context = [
       "WebChat gateway account state (verified local control data; source of truth for this ChatGPT web account):",
       `authenticated=${account.authenticated === true ? "true" : "false"}`,
@@ -158,7 +286,7 @@ export class GatewayRuntime {
     ].join("\n");
 
     messages.unshift({ role: "system", content: context });
-    return { ...payload, messages };
+    return { ...prepared, messages };
   }
 
   async dom() {
@@ -198,6 +326,7 @@ export class GatewayRuntime {
         network_complete: this.browser.networkComplete === true,
         network_text_length: (this.browser.lastNetworkText || "").length,
         thinking_text_length: (this.browser.lastThinkingText || "").length,
+        chatgpt_account_id_observed: !!this.browser.chatgptAccountId,
         progress: progress ? {
           status: progress.status || null,
           content_length: (progress.content || "").length,
@@ -206,6 +335,7 @@ export class GatewayRuntime {
         } : null,
         dom,
       },
+      catalog: { projects: this.catalog.listProjects().length },
       jobs: this.jobs.stats(),
     };
   }

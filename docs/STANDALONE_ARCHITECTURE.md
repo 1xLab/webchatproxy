@@ -1,120 +1,86 @@
-# WebChat Gateway — Standalone Architecture
+# webchatproxy Standalone Architecture
 
-## Escopo
+## Scope
 
-Tudo pertence ao repositório `1xLab/ws_com_ia`.
+The canonical repository is `1xLab/webchatproxy`.
 
-O WebChat Gateway é standalone e não depende do `1xLab/auditor`, Receita Browser, extensão Chrome/Firefox ou qualquer outro processo externo além do próprio Chrome/Playwright e do `chatgpt.com`.
+The product consists of the Node.js gateway, Playwright browser automation, persistent browser profile, local runtime state, diagnostics and deployment assets required to operate the gateway.
 
-## Processos e portas
+## Process
 
-### Gateway Node/Playwright
+Default listener:
 
 ```text
-127.0.0.1:3210 (default)
+127.0.0.1:3210
 ```
 
-Variáveis:
+Main configuration:
 
 ```bash
 WEBCHAT_HOST=127.0.0.1
 WEBCHAT_PORT=3210
-WEBCHAT_PROFILE_DIR=/path/to/profile
+WEBCHAT_PROFILE_DIR=/path/to/browser-profile
 WEBCHAT_RUNTIME_DIR=/path/to/runtime
 WEBCHAT_API_TOKEN=secret
 ```
 
-A porta é dedicada e configurável. `server/start.sh` verifica colisão antes de iniciar.
+## Runtime layout
 
-### Aplicação PHP/cPanel
-
-A aplicação está em:
+Recommended deployment layout:
 
 ```text
-/public_html
+webchatproxy/
+└── server/
+    ├── bootstrap.mjs
+    ├── standalone.mjs
+    ├── browser-backend.mjs
+    ├── browser-auth.mjs
+    ├── doctor.mjs
+    ├── start.sh
+    ├── remote_ia.sh
+    ├── lib/
+    ├── tests/
+    ├── browser-profile/   # local persistent session, ignored by Git
+    └── runtime/           # local jobs/logs/debug, ignored by Git
 ```
 
-Ela usa a porta HTTP/HTTPS normal do cPanel/Apache e chama o gateway do lado servidor com cURL.
-
-Configuração:
-
-```bash
-WEBCHAT_GATEWAY_URL=http://127.0.0.1:3210
-WEBCHAT_GATEWAY_TOKEN=secret
-WEBCHAT_DB_PATH=/home/USER/public_html/storage/webchat.sqlite
-```
-
-O token do gateway não é enviado ao JavaScript do navegador.
-
-## Fluxo
+## Request flow
 
 ```text
-Browser do operador
-        |
-        | HTTPS
-        v
-public_html (PHP)
-        |
-        | SQLite: conversas, mensagens, referência de jobs
-        |
-        | HTTP servidor-servidor
-        v
-WebChat Gateway :3210
-        |
-        | JobManager persistente
-        v
+HTTP client
+    |
+    v
+Gateway API
+    |
+    v
+JobManager
+    |
+    v
 BrowserBackend
-        |
-        | Playwright + profile persistente
-        v
-Chrome -> chatgpt.com
+    |
+    v
+Playwright persistent browser context
+    |
+    v
+ChatGPT Web
 ```
 
-## Diretórios
+## Job contract
 
-```text
-server/
-  standalone.mjs           API standalone
-  browser-backend.mjs      driver ChatGPT/Playwright existente
-  doctor.mjs               diagnóstico autônomo
-  start.sh                 lifecycle do processo
-  lib/
-    event-journal.mjs
-    job-manager.mjs
-    diagnostics.mjs
-  tests/
-  browser-profile/         ignorado pelo Git
-  runtime/                 ignorado pelo Git
-    jobs/
-    logs/events.jsonl
-    debug/
-
-public_html/
-  index.php
-  api.php
-  config.php
-  assets/
-  lib/
-  storage/
-    webchat.sqlite         ignorado pelo Git
-```
-
-## Contrato de jobs
-
-O endpoint principal assíncrono é:
+The asynchronous endpoint is:
 
 ```http
 POST /v1/jobs
 ```
 
-Exemplo:
+Example:
 
 ```json
 {
-  "request_id": "customer-123:message-456",
+  "request_id": "client-123:message-456",
   "model": "chatgpt-web",
   "messages": [
-    {"role": "user", "content": "Olá"}
+    {"role": "user", "content": "Hello"}
   ],
   "conversation_id": null,
   "new_conversation": true,
@@ -122,104 +88,58 @@ Exemplo:
 }
 ```
 
-Resposta imediata:
-
-```http
-202 Accepted
-```
-
-```json
-{
-  "job": {
-    "id": "customer-123:message-456",
-    "status": "queued"
-  },
-  "status_url": "/v1/jobs/customer-123%3Amessage-456"
-}
-```
-
-A API OpenAI-compatible continua disponível:
+The OpenAI-compatible synchronous endpoint is:
 
 ```http
 POST /v1/chat/completions
 ```
 
-Por padrão ela espera o job terminar para compatibilidade com clientes existentes. Para comportamento assíncrono:
+It can also return an asynchronous job when requested through `Prefer: respond-async` or `{"async": true}`.
 
-```http
-Prefer: respond-async
-```
+## Persistence
 
-ou:
-
-```json
-{"async": true}
-```
-
-## Persistência
-
-### Gateway
-
-Jobs são persistidos individualmente em:
+Jobs are persisted under:
 
 ```text
 server/runtime/jobs/{job-id}.json
 ```
 
-O objetivo é impedir perda silenciosa de estado e permitir diagnóstico após restart.
+Runtime persistence exists for observability and restart recovery. It is not a client integration mechanism.
 
-O gateway mantém apenas um worker ativo por profile nesta primeira etapa. A interface `JobManager -> BrowserBackend` permite evoluir para múltiplos workers/profiles sem mudar a API pública.
+## Browser profile ownership
 
-### PHP
+The persistent browser profile is the authentication boundary for ChatGPT Web. It must not be copied into source control or opened concurrently by multiple browser processes.
 
-SQLite contém:
+Authentication is performed with:
 
-- `conversations`
-- `messages`
-- `jobs`
-
-SQLite usa WAL, foreign keys e busy timeout. O arquivo é protegido por `.htaccess`.
-
-## Estratégia de escala comercial
-
-A unidade de concorrência não deve ser uma `Page` compartilhada. A unidade correta é um **worker/profile ChatGPT**.
-
-Evolução prevista:
-
-```text
-API
- |
- v
-Scheduler
- |----------------------|
- v                      v
-Worker profile-A    Worker profile-B
- |                      |
-Chrome A              Chrome B
+```bash
+./start.sh browser-auth
 ```
 
-Cada worker deve possuir:
+## Scaling model
 
-- profile persistente próprio;
-- fila serial própria;
-- browser/context próprio;
-- limite de jobs;
-- health próprio;
-- restart independente;
-- métricas próprias.
+The unit of concurrency is a browser worker/profile, not a shared Playwright page.
 
-A API e o PHP não precisam conhecer detalhes do Playwright para escalar horizontalmente.
+```text
+Gateway/Scheduler
+      |
+  +---+---+
+  |       |
+Worker A  Worker B
+Profile A Profile B
+Chrome A  Chrome B
+```
 
-## Segurança mínima
+Each worker must have independent profile, queue, browser context, runtime state, health and restart lifecycle.
 
-- bind padrão do gateway: `127.0.0.1`;
-- `WEBCHAT_API_TOKEN` opcional, recomendado em produção;
-- token fica apenas no servidor PHP;
-- CORS desabilitado por padrão;
-- debug não expõe cookies, localStorage ou tokens do profile;
-- runtime e profile ficam fora do Git;
-- SQLite recebe bloqueio HTTP por `.htaccess`.
+## Security
 
-## Debug
+- loopback bind by default;
+- Bearer authentication available through `WEBCHAT_API_TOKEN`;
+- CORS disabled unless explicitly configured;
+- profile and runtime ignored by Git;
+- debug endpoints must not expose cookies, localStorage, session tokens or other browser credentials.
 
-Ver `docs/DEBUG_CONTRACT.md`.
+## Diagnostics
+
+See `DEBUG_CONTRACT.md`.

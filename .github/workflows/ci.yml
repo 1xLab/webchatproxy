@@ -1,0 +1,74 @@
+name: webchatproxy-ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'refactor/**'
+      - 'feat/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run doctor:contract
+      - run: bash -n start.sh remote_ia.sh
+      - name: Node core must not depend on a web application
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE 'public_html|/home/[^/]+/public_html|sistema/|webagent/' server \
+            --include='*.mjs' --include='*.js'; then
+            echo 'ERROR: proxy core contains a dependency on an external web application'
+            exit 1
+          fi
+      - name: start.sh rejects public webroot runtime paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/public_html/runtime
+          set +e
+          WEBCHAT_RUNTIME_DIR=/tmp/public_html/runtime ./start.sh status >/tmp/webroot-boundary.log 2>&1
+          CODE=$?
+          set -e
+          test "$CODE" = "78"
+          grep -q 'must not live under public_html' /tmp/webroot-boundary.log
+      - name: Standalone HTTP/auth contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          WEBCHAT_DISABLE_BROWSER_START=1 \
+          WEBCHAT_API_TOKEN=ci-secret \
+          WEBCHAT_PORT=3218 \
+          WEBCHAT_RUNTIME_DIR=/tmp/webchatproxy-ci \
+          node standalone.mjs >/tmp/webchatproxy-ci.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for _ in {1..40}; do
+            curl -fsS http://127.0.0.1:3218/health >/tmp/health.json 2>/dev/null && break
+            sleep 0.25
+          done
+          grep -q '"service":"webchat-gateway"' /tmp/health.json
+          CODE=$(curl -sS -o /tmp/unauthorized.json -w '%{http_code}' http://127.0.0.1:3218/v1/debug/config)
+          test "$CODE" = "401"
+          curl -fsS -H 'Authorization: Bearer ci-secret' http://127.0.0.1:3218/v1/debug/config | grep -q '"browser_start_disabled":true'
+          curl -fsS -H 'Authorization: Bearer ci-secret' http://127.0.0.1:3218/v1/debug/runtime | grep -q '"service":"webchat-gateway"'
+          READY=$(curl -sS -H 'Authorization: Bearer ci-secret' -o /tmp/ready.json -w '%{http_code}' http://127.0.0.1:3218/ready)
+          test "$READY" = "503"

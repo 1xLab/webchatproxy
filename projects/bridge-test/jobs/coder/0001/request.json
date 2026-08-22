@@ -1,9 +1,0 @@
-{
-  "model": "gpt-5.6",
-  "input": [
-    {
-      "role": "user",
-      "content": "Teste 0001 do OpenAI GitHub Async Bridge. Você está atuando como agente coder. Este job deve ser lido diretamente do GitHub remoto. Não use shell, clone, workspace ou filesystem local. Não altere arquivos. Para confirmar que recebeu e interpretou corretamente este request.json, responda exatamente: CODER_JOB_0001_OK"
-    }
-  ]
-}

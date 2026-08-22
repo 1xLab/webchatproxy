@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
-# WebChat full deploy script: syncs both gateway (server/) and Laravel app (sistema/).
+# webchatproxy deployment helper.
 # Usage: ./deploy.sh [sync|deploy|restart|all]
-#   sync      - rsync server/ and sistema/ to remote (default)
-#   deploy    - sync + run sistema/deploy.sh on remote (npm ci, composer, migrations)
-#   restart   - restart gateway service via start.sh
-#   all       - sync + deploy + restart
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REMOTE_HOST="${WEBCHAT_DEPLOY_HOST:-}"
 REMOTE_USER="${WEBCHAT_DEPLOY_USER:-}"
-REMOTE_HOME="${WEBCHAT_DEPLOY_HOME:-/home/$(whoami)}"
+REMOTE_HOME="${WEBCHAT_DEPLOY_HOME:-}"
+ACTION="${1:-sync}"
 
 if [ -z "$REMOTE_HOST" ] || [ -z "$REMOTE_USER" ]; then
-  echo "ERROR: Set WEBCHAT_DEPLOY_HOST and WEBCHAT_DEPLOY_USER env vars" >&2
-  echo "Example: WEBCHAT_DEPLOY_HOST=147.93.183.134 WEBCHAT_DEPLOY_USER=agent ./deploy.sh all" >&2
+  echo "ERROR: Set WEBCHAT_DEPLOY_HOST and WEBCHAT_DEPLOY_USER" >&2
   exit 70
 fi
 
-ACTION="${1:-sync}"
-REMOTE="$REMOTE_USER@$REMOTE_HOST"
+if [ -z "$REMOTE_HOME" ]; then
+  REMOTE_HOME="/home/$REMOTE_USER"
+fi
 
-sync_server() {
-  echo "==> Syncing server/ directory to $REMOTE:$REMOTE_HOME/server/"
+REMOTE="$REMOTE_USER@$REMOTE_HOST"
+SSH_OPTS=(-o StrictHostKeyChecking=no)
+
+sync_proxy() {
+  echo "==> Syncing webchatproxy server/ to $REMOTE:$REMOTE_HOME/server/"
+  ssh "${SSH_OPTS[@]}" "$REMOTE" \
+    "mkdir -p '$REMOTE_HOME/server/runtime/jobs' '$REMOTE_HOME/server/runtime/logs' '$REMOTE_HOME/server/runtime/debug'"
+
   rsync -avz --delete \
     --exclude='browser-profile/' \
     --exclude='runtime/' \
@@ -31,78 +34,38 @@ sync_server() {
     --exclude='*.log' \
     -e "ssh -o StrictHostKeyChecking=no" \
     "$SCRIPT_DIR/server/" "$REMOTE:$REMOTE_HOME/server/"
-  ssh -o StrictHostKeyChecking=no "$REMOTE" "mkdir -p $REMOTE_HOME/server/runtime/jobs $REMOTE_HOME/server/runtime/logs $REMOTE_HOME/server/runtime/debug"
-  echo "==> Server directory synced. Runtime dirs ensured."
 }
 
-sync_laravel() {
-  echo "==> Syncing sistema/ directory to $REMOTE:$REMOTE_HOME/sistema/"
-  rsync -avz --delete \
-    --exclude='vendor/' \
-    --exclude='node_modules/' \
-    --exclude='.env' \
-    --exclude='storage/framework/cache/' \
-    --exclude='storage/framework/sessions/' \
-    --exclude='storage/framework/views/*.php' \
-    --exclude='storage/logs/laravel.log' \
-    -e "ssh -o StrictHostKeyChecking=no" \
-    "$SCRIPT_DIR/sistema/" "$REMOTE:$REMOTE_HOME/sistema/"
-  echo "==> Laravel directory synced."
+install_proxy() {
+  echo "==> Installing production dependencies"
+  ssh "${SSH_OPTS[@]}" "$REMOTE" "cd '$REMOTE_HOME/server' && npm ci"
 }
 
-sync_public_html() {
-  echo "==> Syncing public_html/ directory to $REMOTE:$REMOTE_HOME/public_html/"
-  rsync -avz --delete \
-    --exclude='.htaccess' \
-    -e "ssh -o StrictHostKeyChecking=no" \
-    "$SCRIPT_DIR/public_html/" "$REMOTE:$REMOTE_HOME/public_html/"
-
-  # The Laravel module source is the only canonical WebUI asset. Always publish it
-  # after rsync as well, so the lightweight `sync` action cannot leave an old
-  # server-based app.js in public_html.
-  ssh -o StrictHostKeyChecking=no "$REMOTE" "mkdir -p '$REMOTE_HOME/public_html/modules/webui' && install -m 0644 '$REMOTE_HOME/sistema/Modules/WebUI/resources/js/app.js' '$REMOTE_HOME/public_html/modules/webui/app.js' && cmp -s '$REMOTE_HOME/sistema/Modules/WebUI/resources/js/app.js' '$REMOTE_HOME/public_html/modules/webui/app.js'"
-  echo "==> Public_html directory synced and WebUI asset verified."
-}
-
-run_deploy() {
-  echo "==> Running Laravel deploy on $REMOTE"
-  ssh -o StrictHostKeyChecking=no "$REMOTE" "cd $REMOTE_HOME/sistema && bash deploy.sh"
-  echo "==> Laravel deploy complete."
-}
-
-restart_gateway() {
-  echo "==> Restarting gateway on $REMOTE"
-  ssh -o StrictHostKeyChecking=no "$REMOTE" "cd $REMOTE_HOME/server && ./start.sh restart"
-  echo "==> Gateway restarted."
-  ssh -o StrictHostKeyChecking=no "$REMOTE" "cd $REMOTE_HOME/server && ./start.sh status"
+restart_proxy() {
+  echo "==> Restarting webchatproxy"
+  ssh "${SSH_OPTS[@]}" "$REMOTE" \
+    "cd '$REMOTE_HOME/server' && ./start.sh restart && ./start.sh status"
 }
 
 case "$ACTION" in
   sync)
-    sync_server
-    sync_laravel
-    sync_public_html
+    sync_proxy
     ;;
   deploy)
-    sync_server
-    sync_laravel
-    sync_public_html
-    run_deploy
+    sync_proxy
+    install_proxy
     ;;
   restart)
-    restart_gateway
+    restart_proxy
     ;;
   all)
-    sync_server
-    sync_laravel
-    sync_public_html
-    run_deploy
-    restart_gateway
+    sync_proxy
+    install_proxy
+    restart_proxy
     ;;
   *)
-    echo "Unknown action: $ACTION" >&2
     echo "Usage: $0 [sync|deploy|restart|all]" >&2
-    exit 1
+    exit 2
     ;;
 esac
 

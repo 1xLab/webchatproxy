@@ -1,9 +1,0 @@
-{
-  "model": "gpt-5.6",
-  "input": [
-    {
-      "role": "user",
-      "content": "Execute este job usando seu acesso autenticado ao GitHub. NÃO use nem altere o workspace atualmente aberto. Se precisar de filesystem para escrever, crie um diretório temporário próprio, clone git@github.com:1xLab/ws_com_ia.git nele, faça checkout da branch main e trabalhe somente nesse clone temporário. Crie exatamente projects/bridge-test/jobs/reviewer/0001/request.json contendo somente outro payload válido da OpenAI Responses API. Esse novo request deve instruir o agente reviewer a criar projects/bridge-test/jobs/coder/0003/request.json, também como payload válido da OpenAI Responses API, contendo a instrução final CODER_REVIEWED_OK. Depois faça commit e push para origin/main. Antes de concluir, confirme no GitHub remoto que projects/bridge-test/jobs/reviewer/0001/request.json existe. Só então responda CODER_JOB_0005_OK."
-    }
-  ]
-}

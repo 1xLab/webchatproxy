@@ -1,5 +1,5 @@
 {
-  "name": "webchat-gateway",
+  "name": "webchatproxy",
   "version": "2.0.0",
   "private": true,
   "type": "module",
@@ -8,8 +8,6 @@
   },
   "scripts": {
     "start": "node bootstrap.mjs",
-    "start:legacy": "node server.mjs",
-    "start:browser-legacy": "REMOTE_IA_BACKEND=browser node server.mjs",
     "doctor": "node doctor.mjs",
     "doctor:live": "node doctor.mjs --live",
     "doctor:contract": "node doctor.mjs --contract",

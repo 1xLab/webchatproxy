@@ -20,8 +20,17 @@ server.listen(port, host, () => {
   runtime.journal.record("gateway_listening", { host, port, pid: process.pid, backend: "chatgpt-web2api" });
   console.log(`[gateway] listening on http://${host}:${port}`);
   runtime.startEngine().catch((error) => {
-    runtime.journal.record("engine_start_failed", { error: error.message, code: error.code || null }, "error");
-    console.error(`[engine] startup failed: ${error.message}`);
+    // A failed engine must not be relaunched implicitly by every subsequent API
+    // request. That behavior creates Chrome storms and long HTTP timeouts. Keep
+    // the gateway alive/degraded, but fail engine-dependent requests fast until
+    // the service is explicitly restarted after the underlying problem is fixed.
+    if (runtime.engine) runtime.engine.autoStart = false;
+    runtime.journal.record("engine_start_failed", {
+      error: error.message,
+      code: error.code || null,
+      autostart_disabled: true,
+    }, "error");
+    console.error(`[engine] startup failed: ${error.message}; engine autostart disabled until service restart`);
   });
 });
 

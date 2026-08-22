@@ -58,27 +58,53 @@ jobs:
         run: npm run doctor:contract
 
       - name: Validate shell entrypoints
-        run: bash -n start.sh remote_ia.sh engine/install.sh
+        run: bash -n start.sh remote_ia.sh engine/install.sh test.sh
 
       - name: Install the actual pinned ChatGPT-Web2API engine
         env:
           WEBCHAT_ENGINE_BOOTSTRAP_PYTHON: python3
         run: bash engine/install.sh
 
-      - name: Verify installed engine identity and imports
+      - name: Verify installed engine identity and full business surface
         run: |
           set -euo pipefail
           .venv-engine/bin/python - <<'PY'
           import importlib.metadata
           from chatgpt_web2api.config import Config
           from chatgpt_web2api.cdp_driver import CDPDriver
+          from chatgpt_web2api.mcp_server import (
+              do_archive_conversation,
+              do_chat_completion,
+              do_chat_with_gpt,
+              do_create_memory,
+              do_create_project,
+              do_delete_conversation,
+              do_delete_memory,
+              do_delete_project,
+              do_get_conversation,
+              do_list_conversations,
+              do_list_gpts,
+              do_list_memories,
+              do_list_models,
+              do_list_project_files,
+              do_list_projects,
+              do_update_project_instructions,
+          )
           version = importlib.metadata.version('chatgpt-web2api')
           assert version, 'missing chatgpt-web2api package version'
           cfg = Config.load(None)
           assert cfg.server.host in {'127.0.0.1', 'localhost', '::1'}
           assert CDPDriver is not None
+          assert all(callable(x) for x in (
+              do_archive_conversation, do_chat_completion, do_chat_with_gpt,
+              do_create_memory, do_create_project, do_delete_conversation,
+              do_delete_memory, do_delete_project, do_get_conversation,
+              do_list_conversations, do_list_gpts, do_list_memories,
+              do_list_models, do_list_project_files, do_list_projects,
+              do_update_project_instructions,
+          ))
           print('engine_version=' + version)
-          print('engine_import=ok')
+          print('engine_full_surface=ok')
           PY
           grep -Fq "$W2A_PIN" requirements-engine.txt
 
@@ -200,18 +226,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -d /home/agent/server
-          test -d /home/agent/server/browser-profile
-          test -d /home/agent/server/runtime
+          test -d /home/agent/webchatproxy
+          test -d /home/agent/webchatproxy/browser-profile
+          test -d /home/agent/webchatproxy/runtime
       - name: Verify installed service before mutation
-        working-directory: /home/agent/server
+        working-directory: /home/agent/webchatproxy
         shell: bash
         run: |
           set -euo pipefail
-          ./start.sh status
           curl -fsS http://127.0.0.1:3210/health
+          curl -fsS http://127.0.0.1:3210/ready
       - name: Authenticated control-plane preflight
-        working-directory: /home/agent/server
+        working-directory: /home/agent/webchatproxy
         shell: bash
         run: |
           set -euo pipefail
@@ -220,6 +246,8 @@ jobs:
           node -e 'const x=JSON.parse(require("fs").readFileSync("/tmp/webchat-projects.json")); if(!Array.isArray(x.projects)) process.exit(1)'
           curl -fsS 'http://127.0.0.1:3210/v1/conversations?limit=5' >/tmp/webchat-conversations.json
           node -e 'const x=JSON.parse(require("fs").readFileSync("/tmp/webchat-conversations.json")); if(!Array.isArray(x.items)) process.exit(1)'
+          curl -fsS http://127.0.0.1:3210/v1/memories >/tmp/webchat-memories.json
+          curl -fsS http://127.0.0.1:3210/v1/gpts >/tmp/webchat-gpts.json
       - name: Authenticated generation smoke
-        working-directory: /home/agent/server
+        working-directory: /home/agent/webchatproxy
         run: npm run doctor:live

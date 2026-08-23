@@ -12,6 +12,7 @@ pin="$(awk -F= '$1=="commit"{print $2}' "$LOCK_FILE")"
 [ -n "$repo" ] && [ -n "$pin" ] || { echo "ERROR: invalid $LOCK_FILE" >&2; exit 78; }
 command -v git >/dev/null 2>&1 || { echo "ERROR: git is required" >&2; exit 78; }
 command -v go >/dev/null 2>&1 || { echo "ERROR: Go 1.21+ is required" >&2; exit 78; }
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required" >&2; exit 78; }
 
 go version | awk '{print $3}' | sed 's/^go//' | awk -F. '{ if (($1+0)<1 || (($1+0)==1 && ($2+0)<21)) exit 78 }'
 
@@ -40,11 +41,25 @@ if [ -d "$PATCHES_DIR" ]; then
   done
 fi
 
+cp "$BASE_DIR/providers/kimi/engine/refresh.go" "$VENDOR_DIR/refresh.go"
+python3 - "$VENDOR_DIR/main.go" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = '"Bearer "+accessToken'
+count = source.count(needle)
+if count != 3:
+    raise SystemExit(f"ERROR: expected exactly 3 Kimi access-token call sites, found {count}")
+path.write_text(source.replace(needle, '"Bearer "+getAccessToken()'))
+PY
+
 (
   cd "$VENDOR_DIR"
-  gofmt -w main.go
-  go vet main.go
-  go build -trimpath -ldflags '-s -w' -o kimi-proxy main.go
+  gofmt -w main.go refresh.go
+  go vet .
+  go build -trimpath -ldflags '-s -w' -o kimi-proxy .
 )
 
 test -x "$VENDOR_DIR/kimi-proxy"

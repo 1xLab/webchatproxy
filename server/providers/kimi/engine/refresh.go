@@ -15,7 +15,11 @@ import (
     "time"
 )
 
-const kimiRefreshURL = "https://auth.kimi.com/api/account.gateway.v1.AuthService/RefreshToken"
+const (
+    kimiRefreshURL       = "https://auth.kimi.com/api/account.gateway.v1.AuthService/RefreshToken"
+    kimiRefreshLeadTime  = 2 * time.Minute
+    kimiRefreshRetryWait = 30 * time.Second
+)
 
 var (
     kimiTokenMu      sync.Mutex
@@ -69,7 +73,20 @@ func tokenNeedsRefresh(token string) bool {
     if err != nil || claims.Typ != "access" || claims.Exp == 0 {
         return true
     }
-    return time.Now().Add(2 * time.Minute).Unix() >= claims.Exp
+    return time.Now().Add(kimiRefreshLeadTime).Unix() >= claims.Exp
+}
+
+func durationUntilRefresh(token string) time.Duration {
+    claims, err := decodeKimiJWT(token)
+    if err != nil || claims.Typ != "access" || claims.Exp == 0 {
+        return 0
+    }
+    refreshAt := time.Unix(claims.Exp, 0).Add(-kimiRefreshLeadTime)
+    wait := time.Until(refreshAt)
+    if wait < 0 {
+        return 0
+    }
+    return wait
 }
 
 func writeTokenAtomic(path, value string) error {
@@ -187,9 +204,9 @@ func refreshKimiTokenLocked() error {
     return nil
 }
 
-// getAccessToken serializes refreshes per process. Every authenticated upstream
-// request passes through here, so the access token is renewed two minutes before
-// expiry without a browser or process restart.
+// getAccessToken preserves the request-path guard. It shares the same mutex as
+// the idle refresher, so a chat arriving at refresh time cannot race a scheduled
+// refresh or cause two refresh requests.
 func getAccessToken() string {
     kimiTokenMu.Lock()
     defer kimiTokenMu.Unlock()
@@ -199,4 +216,37 @@ func getAccessToken() string {
         }
     }
     return accessToken
+}
+
+// kimiTokenRefreshLoop keeps the access token alive even when the provider is
+// idle. It sleeps until two minutes before the current token expiry, refreshes
+// under the same lock used by request-time refresh, then recalculates from the
+// newly issued token. Failures retry at a bounded interval and never busy-loop.
+func kimiTokenRefreshLoop() {
+    for {
+        kimiTokenMu.Lock()
+        wait := durationUntilRefresh(accessToken)
+        kimiTokenMu.Unlock()
+
+        if wait > 0 {
+            time.Sleep(wait)
+            continue
+        }
+
+        kimiTokenMu.Lock()
+        if !tokenNeedsRefresh(accessToken) {
+            kimiTokenMu.Unlock()
+            continue
+        }
+        err := refreshKimiTokenLocked()
+        kimiTokenMu.Unlock()
+        if err != nil {
+            log.Printf("Kimi background access-token refresh failed: %v; retrying in %s", err, kimiRefreshRetryWait)
+            time.Sleep(kimiRefreshRetryWait)
+        }
+    }
+}
+
+func init() {
+    go kimiTokenRefreshLoop()
 }

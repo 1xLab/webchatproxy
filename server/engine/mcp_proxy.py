@@ -76,6 +76,19 @@ def normalized_message_text(message: dict[str, Any]) -> str:
     return ""
 
 
+def matches_mcp_user_turn(actual: str, expected: str) -> bool:
+    """Match the exact MCP message as persisted by current bridge semantics.
+
+    For a brand-new conversation the OpenAI-message adapter currently renders
+    the transcript as ``[User]\n<message>`` before handing it to Web2API. When
+    continuing by conversation_id it sends only ``<message>``. Accept exactly
+    those two representations; do not use substring matching, which could bind
+    reconciliation to an older or unrelated turn.
+    """
+    expected = expected.strip()
+    return actual.strip() in {expected, f"[User]\n{expected}"}
+
+
 class BridgeClient:
     def __init__(self) -> None:
         self.base_url = os.environ.get("WEBCHAT_ENGINE_URL", "http://127.0.0.1:3211").rstrip("/")
@@ -114,14 +127,7 @@ class BridgeClient:
         result: dict[str, Any],
         user_message: str,
     ) -> dict[str, Any]:
-        """Require the canonical assistant turn that follows this exact user turn.
-
-        The bridge may finish DOM generation before ChatGPT's conversation endpoint
-        has propagated the new assistant node. A naive "latest assistant" lookup can
-        therefore return the previous turn. Poll the normalized conversation until
-        the exact user message sent by this MCP call exists and has an assistant turn
-        after it. Never fall back to the potentially stale/corrupted bridge content.
-        """
+        """Require the canonical assistant turn that follows this exact user turn."""
         conversation_id = str(result.get("conversation_id") or "").strip()
         if not conversation_id:
             raise RuntimeError("MCP chat completed without conversation_id")
@@ -138,10 +144,6 @@ class BridgeClient:
                 params={"offset": 0, "limit": 500},
             )
 
-            # Pinned upstream do_get_conversation() returns the normalized
-            # conversation object directly: {id,title,messages,...}. Older
-            # bridge variants wrapped it as {conversation:{...}}, so accept
-            # both shapes while preferring the current direct response.
             conversation = payload
             wrapped = payload.get("conversation") if isinstance(payload, dict) else None
             if isinstance(wrapped, dict):
@@ -153,7 +155,9 @@ class BridgeClient:
                 for index, message in enumerate(messages):
                     if not isinstance(message, dict):
                         continue
-                    if message.get("role") == "user" and normalized_message_text(message) == expected:
+                    if message.get("role") == "user" and matches_mcp_user_turn(
+                        normalized_message_text(message), expected
+                    ):
                         user_index = index
                 if user_index >= 0:
                     for message in messages[user_index + 1 :]:
@@ -260,8 +264,6 @@ def create_server(client: BridgeClient) -> Server:
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        # Reuse the pinned upstream definitions so schemas, descriptions,
-        # annotations and access-gate visibility stay aligned with Web2API.
         return build_tools()
 
     @server.call_tool()

@@ -13,9 +13,9 @@ pm="$(awk -F= '$1=="package_manager"{print $2}' "$LOCK_FILE")"
 [ -n "$repo" ] && [ -n "$pin" ] && [ -n "$pm" ] || { echo "ERROR: invalid $LOCK_FILE" >&2; exit 78; }
 command -v git >/dev/null 2>&1 || { echo "ERROR: git is required" >&2; exit 78; }
 command -v node >/dev/null 2>&1 || { echo "ERROR: Node.js 20+ is required" >&2; exit 78; }
+command -v corepack >/dev/null 2>&1 || { echo "ERROR: corepack is required for pinned package manager" >&2; exit 78; }
 
 node -e 'const [major]=process.versions.node.split(".").map(Number); if(major<20){console.error(`ERROR: Node.js 20+ required; found ${process.versions.node}`); process.exit(78)}'
-command -v corepack >/dev/null 2>&1 || { echo "ERROR: corepack is required for pinned pnpm" >&2; exit 78; }
 
 mkdir -p "$(dirname "$VENDOR_DIR")"
 if [ ! -d "$VENDOR_DIR/.git" ]; then
@@ -31,14 +31,17 @@ git -C "$VENDOR_DIR" fetch --depth=1 origin "$pin"
 git -C "$VENDOR_DIR" checkout --detach --force FETCH_HEAD
 test "$(git -C "$VENDOR_DIR" rev-parse HEAD)" = "$pin" || { echo "ERROR: DeepSeek upstream pin mismatch" >&2; exit 78; }
 
-corepack prepare "$pm" --activate
+pnpm_run() {
+  corepack "$pm" "$@"
+}
+
 (
   cd "$VENDOR_DIR"
-  pnpm install --frozen-lockfile
-  pnpm typecheck
-  pnpm lint
-  pnpm test
-  pnpm build
+  pnpm_run install --frozen-lockfile
+  pnpm_run typecheck
+  pnpm_run lint
+  pnpm_run test
+  pnpm_run build
 )
 
 printf 'DeepSeek upstream installed and verified: %s\n' "$pin"

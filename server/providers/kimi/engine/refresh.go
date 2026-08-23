@@ -18,11 +18,12 @@ import (
 const kimiRefreshURL = "https://auth.kimi.com/api/account.gateway.v1.AuthService/RefreshToken"
 
 var (
-    kimiTokenMu       sync.Mutex
-    refreshToken      = os.Getenv("KIMI_REFRESH_TOKEN")
-    accessTokenFile   = os.Getenv("KIMI_ACCESS_TOKEN_FILE")
-    refreshTokenFile  = os.Getenv("KIMI_REFRESH_TOKEN_FILE")
-    kimiTimezone      = envOrDefault("KIMI_TIMEZONE", "America/Sao_Paulo")
+    kimiTokenMu      sync.Mutex
+    kimiRuntimeDir   = envOrDefault("KIMI_RUNTIME_DIR", "runtime/kimi")
+    accessTokenFile  = envOrDefault("KIMI_ACCESS_TOKEN_FILE", filepath.Join(kimiRuntimeDir, "access_token"))
+    refreshTokenFile = envOrDefault("KIMI_REFRESH_TOKEN_FILE", filepath.Join(kimiRuntimeDir, "refresh_token"))
+    refreshToken     = readTokenFile(refreshTokenFile)
+    kimiTimezone     = envOrDefault("KIMI_TIMEZONE", "America/Sao_Paulo")
 )
 
 type kimiJWTClaims struct {
@@ -37,6 +38,14 @@ type kimiJWTClaims struct {
 type kimiRefreshResponse struct {
     AccessToken  string `json:"accessToken"`
     RefreshToken string `json:"refreshToken"`
+}
+
+func readTokenFile(path string) string {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        return ""
+    }
+    return strings.TrimSpace(string(data))
 }
 
 func decodeKimiJWT(token string) (kimiJWTClaims, error) {
@@ -64,9 +73,6 @@ func tokenNeedsRefresh(token string) bool {
 }
 
 func writeTokenAtomic(path, value string) error {
-    if path == "" {
-        return nil
-    }
     dir := filepath.Dir(path)
     if err := os.MkdirAll(dir, 0700); err != nil {
         return err
@@ -97,7 +103,10 @@ func writeTokenAtomic(path, value string) error {
 
 func refreshKimiTokenLocked() error {
     if refreshToken == "" {
-        return fmt.Errorf("KIMI_REFRESH_TOKEN is required for automatic token renewal")
+        refreshToken = readTokenFile(refreshTokenFile)
+    }
+    if refreshToken == "" {
+        return fmt.Errorf("missing Kimi refresh token file: %s", refreshTokenFile)
     }
 
     accessClaims, err := decodeKimiJWT(accessToken)
@@ -115,10 +124,7 @@ func refreshKimiTokenLocked() error {
         return fmt.Errorf("Kimi refresh token is expired")
     }
 
-    requestBody, err := json.Marshal(kimiRefreshResponse{
-        AccessToken: accessToken,
-        RefreshToken: refreshToken,
-    })
+    requestBody, err := json.Marshal(kimiRefreshResponse{AccessToken: accessToken, RefreshToken: refreshToken})
     if err != nil {
         return err
     }
@@ -181,9 +187,9 @@ func refreshKimiTokenLocked() error {
     return nil
 }
 
-// getAccessToken serializes refreshes per process. Every upstream authenticated
-// request passes through here, so a token is renewed two minutes before expiry
-// without requiring a browser or process restart.
+// getAccessToken serializes refreshes per process. Every authenticated upstream
+// request passes through here, so the access token is renewed two minutes before
+// expiry without a browser or process restart.
 func getAccessToken() string {
     kimiTokenMu.Lock()
     defer kimiTokenMu.Unlock()

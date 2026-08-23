@@ -31,6 +31,16 @@ git -C "$VENDOR_DIR" fetch --depth=1 origin "$pin"
 git -C "$VENDOR_DIR" checkout --detach --force FETCH_HEAD
 test "$(git -C "$VENDOR_DIR" rev-parse HEAD)" = "$pin" || { echo "ERROR: DeepSeek upstream pin mismatch" >&2; exit 78; }
 
+PATCHES_DIR="$BASE_DIR/providers/deepseek/engine/patches"
+if [ -d "$PATCHES_DIR" ]; then
+  for patch_file in "$PATCHES_DIR"/*.patch; do
+    [ -e "$patch_file" ] || continue
+    echo "Applying DeepSeek source patch: $(basename "$patch_file")"
+    git -C "$VENDOR_DIR" apply --check "$patch_file" || { echo "ERROR: patch check failed: $patch_file" >&2; exit 78; }
+    git -C "$VENDOR_DIR" apply "$patch_file"
+  done
+fi
+
 pnpm_run() {
   corepack "$pm" "$@"
 }

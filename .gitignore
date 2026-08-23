@@ -1,8 +1,10 @@
 node_modules/
 server/node_modules/
 server/.venv-chatgpt/
+server/.vendor/
 server/providers/**/__pycache__/
 server/browser-profile/
+server/browser-profile-deepseek/
 server/runtime/
 server/*.log
 server/.webchat-gateway.pid

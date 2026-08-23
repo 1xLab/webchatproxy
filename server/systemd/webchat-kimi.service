@@ -1,0 +1,23 @@
+[Unit]
+Description=WebChatProxy Kimi Web Provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/webchatproxy
+Environment=HOME=/home/agent
+Environment=KIMI_HOST=127.0.0.1
+Environment=KIMI_PORT=3230
+Environment=KIMI_RUNTIME_DIR=/home/agent/webchatproxy/runtime/kimi
+EnvironmentFile=-/home/agent/webchatproxy/runtime/kimi.env
+ExecStart=/home/agent/webchatproxy/providers/kimi/engine/start.sh
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

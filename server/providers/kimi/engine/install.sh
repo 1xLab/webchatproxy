@@ -58,8 +58,8 @@ PY
 (
   cd "$VENDOR_DIR"
   gofmt -w main.go refresh.go
-  go vet .
-  go build -trimpath -ldflags '-s -w' -o kimi-proxy .
+  go vet main.go refresh.go
+  go build -trimpath -ldflags '-s -w' -o kimi-proxy main.go refresh.go
 )
 
 test -x "$VENDOR_DIR/kimi-proxy"

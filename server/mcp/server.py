@@ -21,6 +21,7 @@ PROVIDERS = {
     "chatgpt": {"base_url": os.environ.get("CHATGPT_API_URL", "http://127.0.0.1:3210"), "key_file": None},
     "deepseek": {"base_url": os.environ.get("DEEPSEEK_API_URL", "http://127.0.0.1:3220"), "key_file": BASE_DIR / "runtime/deepseek/.api-key"},
     "kimi": {"base_url": os.environ.get("KIMI_API_URL", "http://127.0.0.1:3230"), "key_file": BASE_DIR / "runtime/kimi/.api-key"},
+    "antigravity": {"base_url": os.environ.get("ANTIGRAVITY_API_URL", "http://127.0.0.1:3240"), "key_file": BASE_DIR / "runtime/antigravity/.api-key"},
 }
 
 

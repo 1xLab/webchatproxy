@@ -28,9 +28,10 @@ sync_proxy() {
     "mkdir -p '$REMOTE_APP_DIR/runtime/jobs' '$REMOTE_APP_DIR/runtime/logs' '$REMOTE_APP_DIR/runtime/debug'"
 
   rsync -avz --delete \
-    --exclude='browser-profile/' \
+    --exclude='browser-profile*' \
     --exclude='runtime/' \
     --exclude='.venv-chatgpt/' \
+    --exclude='.vendor/' \
     --exclude='node_modules/' \
     --exclude='.webchat-gateway.pid' \
     --exclude='*.log' \

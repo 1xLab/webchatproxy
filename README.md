@@ -1,6 +1,6 @@
 # webchatproxy
 
-API-only gateway for authenticated Web AI providers. The current provider is ChatGPT Web; additional providers are added as independent siblings under `server/providers/`.
+API-only gateway repository for authenticated Web AI providers. Current providers are isolated siblings under `server/providers/` and can run independently in parallel.
 
 ## Canonical layout
 
@@ -13,25 +13,35 @@ server/
 ├── start.sh
 ├── test.sh
 ├── providers/
-│   └── chatgpt/
-│       ├── gateway-runtime.mjs
-│       ├── http-api.mjs
-│       ├── job-manager.mjs
-│       ├── web2api-engine.mjs
-│       ├── browser/auth.mjs
-│       ├── engine/
-│       │   ├── install.sh
-│       │   ├── requirements.txt
-│       │   └── web2api_bridge.py
-│       └── mcp/
-│           ├── server.py
-│           └── smoke.py
+│   ├── chatgpt/
+│   │   ├── gateway-runtime.mjs
+│   │   ├── http-api.mjs
+│   │   ├── job-manager.mjs
+│   │   ├── web2api-engine.mjs
+│   │   ├── browser/auth.mjs
+│   │   ├── engine/
+│   │   │   ├── install.sh
+│   │   │   ├── requirements.txt
+│   │   │   └── web2api_bridge.py
+│   │   └── mcp/
+│   │       ├── server.py
+│   │       └── smoke.py
+│   └── deepseek/
+│       ├── README.md
+│       └── engine/
+│           ├── UPSTREAM.lock
+│           ├── install.sh
+│           ├── login.sh
+│           └── start.sh
 └── systemd/
+    ├── webchat-gateway.service
+    ├── webchat-mcp.service
+    └── webchat-deepseek.service
 ```
 
 No legacy `server/lib/`, `server/engine/` or root browser shims exist.
 
-## ChatGPT runtime
+## ChatGPT provider
 
 ```text
 HTTP client
@@ -55,65 +65,52 @@ chatgpt.com
 
 MCP is a separate process on `127.0.0.1:8090` and forwards to the same bridge. It does not own a second Chrome process.
 
-## Install
-
-Requirements:
-
-- Node.js 20+
-- Python 3.11+
-- Google Chrome
-- Xvfb for headed Chrome on a server without an existing display
-
-Install is explicit:
+Explicit install and authentication:
 
 ```bash
 cd server
 npm ci
 ./start.sh engine-install
-npm run check
-npm test
-```
-
-Runtime startup never downloads or installs the Python engine. Missing dependencies are a startup error.
-
-The reviewed upstream is pinned in:
-
-```text
-server/providers/chatgpt/engine/requirements.txt
-```
-
-## Authentication
-
-Interactive login is maintenance, not normal runtime:
-
-```bash
-cd server
 ./start.sh browser-auth
 ```
 
-The gateway must be stopped while the canonical browser profile is opened for manual login.
+Runtime startup never installs the ChatGPT engine automatically.
 
-## Start and diagnostics
+## DeepSeek provider
 
-```bash
-./start.sh start
-./start.sh status
-npm run doctor:control
-npm run doctor:live
-```
+DeepSeek is a separate sidecar provider using the reviewed MIT upstream `kittors/deepseek-web-api`, pinned in `server/providers/deepseek/engine/UPSTREAM.lock`.
 
-Default ports:
+Default isolation:
 
 ```text
-3210  public loopback HTTP API
-3211  internal ChatGPT engine bridge
-9222  ChatGPT Chrome CDP
-8090  ChatGPT MCP SSE
+HTTP          127.0.0.1:3220
+Chrome CDP    127.0.0.1:9333
+profile       server/browser-profile-deepseek/
+data          server/runtime/deepseek/
+installed src server/.vendor/deepseek-web-api/
 ```
 
-## API
+Install is explicit. The installer fetches only the exact pinned commit, verifies the checkout, installs the frozen pnpm lockfile, runs typecheck, lint, tests and build, and only then leaves a runnable provider:
 
-Primary endpoints:
+```bash
+cd server
+npm run deepseek:install
+```
+
+Login and start are separate operations:
+
+```bash
+npm run deepseek:login
+npm run deepseek:start
+```
+
+`providers/deepseek/engine/start.sh` never downloads or updates the engine. It fails if the pinned build is missing or if the installed checkout does not match the locked commit.
+
+ChatGPT and DeepSeek do not share a browser profile, CDP port, process or queue and can run simultaneously.
+
+## ChatGPT API
+
+Primary endpoints on `127.0.0.1:3210`:
 
 ```text
 GET    /health
@@ -138,16 +135,18 @@ DELETE /v1/jobs/{id}
 POST   /v1/chat/completions
 ```
 
-Write and destructive ChatGPT operations remain controlled by the upstream-compatible gates:
+Write and destructive ChatGPT operations remain controlled by:
 
 ```text
 W2A_ENABLE_WRITE
 W2A_ENABLE_DESTRUCTIVE
 ```
 
+The DeepSeek sidecar exposes the OpenAI-compatible API implemented by its pinned upstream on `127.0.0.1:3220`.
+
 ## Provider isolation
 
-Future providers are not added inside the ChatGPT implementation. Each provider receives its own directory and independently owned process state, browser profile, CDP/engine ports and concurrency policy.
+New providers are added as siblings, never inside another provider implementation:
 
 ```text
 providers/
@@ -157,7 +156,7 @@ providers/
 └── ...
 ```
 
-This allows providers and independent conversations to execute concurrently without a global browser or provider lock.
+Each provider owns its process state, browser profile, ports and concurrency policy. There is no global browser or provider lock.
 
 ## Local state
 
@@ -165,9 +164,23 @@ Never commit:
 
 ```text
 server/.venv-chatgpt/
+server/.vendor/
 server/browser-profile/
+server/browser-profile-deepseek/
 server/runtime/
 ```
+
+## Validation
+
+```bash
+cd server
+npm ci
+npm run check
+npm test
+npm run doctor:contract
+```
+
+CI also installs and validates the exact pinned ChatGPT and DeepSeek upstream engines. Authenticated live generation still requires the corresponding logged-in runtime environment.
 
 ## Deployment
 
@@ -177,4 +190,4 @@ Canonical installed path:
 /home/agent/webchatproxy
 ```
 
-`deploy.sh` preserves `browser-profile/` and `runtime/`, installs the provider engine explicitly, runs checks/tests, and only then restarts the service.
+Provider engines are installed explicitly during deployment or maintenance; runtime startup does not fetch dependencies.

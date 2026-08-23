@@ -6,6 +6,11 @@ catalog and forwards tool execution to webchatproxy's loopback Web2API bridge.
 That keeps a single browser owner and ensures MCP chat results use the same
 canonical conversation-tree reconciliation as the REST API.
 
+The adapter adds a second, protocol-facing reconciliation guard for chat calls:
+a bridge response is accepted only when the canonical conversation contains the
+exact user message just sent followed by a newer assistant message. This prevents
+a backend propagation race from returning the previous assistant turn.
+
 Transports:
   stdio (default)  - local MCP clients
   sse              - remote/web MCP clients, loopback by default
@@ -54,6 +59,23 @@ def require_tool_gate(name: str) -> None:
         raise PermissionError(f"Tool '{name}' is disabled; set {DESTRUCTIVE_ENV}=1")
 
 
+def normalized_message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                value = part.get("text") or part.get("content")
+                if value:
+                    parts.append(str(value))
+        return "\n".join(parts).strip()
+    return ""
+
+
 class BridgeClient:
     def __init__(self) -> None:
         self.base_url = os.environ.get("WEBCHAT_ENGINE_URL", "http://127.0.0.1:3211").rstrip("/")
@@ -87,15 +109,69 @@ class BridgeClient:
     async def health(self) -> dict[str, Any]:
         return await self.request("GET", "/health")
 
+    async def reconcile_chat_result(
+        self,
+        result: dict[str, Any],
+        user_message: str,
+    ) -> dict[str, Any]:
+        """Require the canonical assistant turn that follows this exact user turn.
+
+        The bridge may finish DOM generation before ChatGPT's conversation endpoint
+        has propagated the new assistant node. A naive "latest assistant" lookup can
+        therefore return the previous turn. Poll the normalized conversation until
+        the exact user message sent by this MCP call exists and has an assistant turn
+        after it. Never fall back to the potentially stale/corrupted bridge content.
+        """
+        conversation_id = str(result.get("conversation_id") or "").strip()
+        if not conversation_id:
+            raise RuntimeError("MCP chat completed without conversation_id")
+
+        attempts = max(1, min(60, int(os.environ.get("WEBCHAT_MCP_RECONCILE_ATTEMPTS", "20"))))
+        delay_ms = max(25, min(5000, int(os.environ.get("WEBCHAT_MCP_RECONCILE_DELAY_MS", "250"))))
+        encoded = quote(conversation_id, safe="")
+        expected = user_message.strip()
+
+        for attempt in range(attempts):
+            payload = await self.request(
+                "GET",
+                f"/v1/conversations/{encoded}",
+                params={"offset": 0, "limit": 500},
+            )
+            conversation = payload.get("conversation") if isinstance(payload, dict) else None
+            messages = conversation.get("messages", []) if isinstance(conversation, dict) else []
+            if isinstance(messages, list):
+                user_index = -1
+                for index, message in enumerate(messages):
+                    if not isinstance(message, dict):
+                        continue
+                    if message.get("role") == "user" and normalized_message_text(message) == expected:
+                        user_index = index
+                if user_index >= 0:
+                    for message in messages[user_index + 1 :]:
+                        if not isinstance(message, dict) or message.get("role") != "assistant":
+                            continue
+                        canonical = normalized_message_text(message)
+                        if canonical:
+                            result["content"] = canonical
+                            result["conversation_id"] = conversation_id
+                            return result
+            if attempt + 1 < attempts:
+                await asyncio.sleep(delay_ms / 1000)
+
+        raise RuntimeError(
+            "canonical assistant response for the current MCP user turn was not available after generation"
+        )
+
     async def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         require_tool_gate(name)
 
         if name == ToolName.CHAT_COMPLETION.value:
+            user_message = str(args.get("message") or "")
             messages: list[dict[str, str]] = []
             system_prompt = args.get("system_prompt")
             if system_prompt:
                 messages.append({"role": "system", "content": str(system_prompt)})
-            messages.append({"role": "user", "content": str(args.get("message") or "")})
+            messages.append({"role": "user", "content": user_message})
             body = {
                 "model": str(args.get("model") or "auto"),
                 "messages": messages,
@@ -103,7 +179,8 @@ class BridgeClient:
                 "project_id": args.get("project_id") or None,
                 "stream": False,
             }
-            return await self.request("POST", "/v1/chat/completions", json_body=body)
+            result = await self.request("POST", "/v1/chat/completions", json_body=body)
+            return await self.reconcile_chat_result(result, user_message)
 
         if name == ToolName.LIST_MODELS.value:
             return await self.request("GET", "/v1/models")
@@ -161,10 +238,12 @@ class BridgeClient:
         if name == ToolName.LIST_GPTS.value:
             return await self.request("GET", "/v1/gpts")
         if name == ToolName.CHAT_WITH_GPT.value:
+            user_message = str(args.get("message") or "")
             gpt_id = quote(str(args["gpt_id"]), safe="")
-            return await self.request(
-                "POST", f"/v1/gpts/{gpt_id}/chat", json_body={"message": str(args.get("message") or "")}
+            result = await self.request(
+                "POST", f"/v1/gpts/{gpt_id}/chat", json_body={"message": user_message}
             )
+            return await self.reconcile_chat_result(result, user_message)
 
         raise ValueError(f"Unknown MCP tool: {name}")
 

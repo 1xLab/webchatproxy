@@ -30,14 +30,18 @@ jobs:
           test -f providers/kimi/README.md
           test -f providers/kimi/engine/UPSTREAM.lock
           test -f providers/kimi/engine/patches/runtime-contract.patch
+          test -f providers/kimi/engine/refresh.go
           test -x providers/kimi/engine/install.sh
           test -x providers/kimi/engine/start.sh
           test -x providers/kimi/engine/import-token.sh
           test -f systemd/webchat-kimi.service
           bash -n providers/kimi/engine/install.sh providers/kimi/engine/start.sh providers/kimi/engine/import-token.sh
           grep -Fq "$KIMI_PIN" providers/kimi/engine/UPSTREAM.lock
+          grep -Fq 'AuthService/RefreshToken' providers/kimi/engine/refresh.go
+          grep -Fq '2 * time.Minute' providers/kimi/engine/refresh.go
+          grep -Fq 'refresh_token' providers/kimi/engine/refresh.go
 
-      - name: Install exact upstream and apply reviewed patches
+      - name: Install exact upstream and apply reviewed integration
         working-directory: server
         env:
           KIMI_VENDOR_DIR: ${{ runner.temp }}/kimi-free-api
@@ -46,9 +50,13 @@ jobs:
           ./providers/kimi/engine/install.sh
           test "$(git -C "$KIMI_VENDOR_DIR" rev-parse HEAD)" = "$KIMI_PIN"
           test -x "$KIMI_VENDOR_DIR/kimi-proxy"
+          test -f "$KIMI_VENDOR_DIR/refresh.go"
           grep -Fq 'host + ":" + port' "$KIMI_VENDOR_DIR/main.go"
           grep -Fq 'if !body.Stream' "$KIMI_VENDOR_DIR/main.go"
           grep -Fq 'path == "/v1/models"' "$KIMI_VENDOR_DIR/main.go"
+          test "$(grep -Fc 'getAccessToken()' "$KIMI_VENDOR_DIR/main.go")" = 3
+          grep -Fq 'writeTokenAtomic(accessTokenFile' "$KIMI_VENDOR_DIR/refresh.go"
+          grep -Fq 'writeTokenAtomic(refreshTokenFile' "$KIMI_VENDOR_DIR/refresh.go"
 
       - name: Start script fails closed without session token
         working-directory: server

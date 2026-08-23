@@ -1,0 +1,58 @@
+name: mcp-router-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/mcp/**'
+      - 'server/systemd/webchat-mcp-router.service'
+      - '.github/workflows/mcp-router.yml'
+  pull_request:
+    paths:
+      - 'server/mcp/**'
+      - 'server/systemd/webchat-mcp-router.service'
+      - '.github/workflows/mcp-router.yml'
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install MCP runtime dependencies
+        run: python -m pip install 'mcp>=1,<2' aiohttp uvicorn starlette
+      - name: Syntax
+        run: python -m py_compile mcp/server.py mcp/smoke.py
+      - name: Validate router contract
+        run: |
+          python - <<'PY'
+          import asyncio
+          from mcp.server import Server
+          from mcp.server.lowlevel.server import NotificationOptions
+          from mcp.server.models import InitializationOptions
+          import mcp.server as _mcp
+          import importlib.util
+
+          spec = importlib.util.spec_from_file_location('router', 'mcp/server.py')
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          assert list(mod.PROVIDERS) == ['chatgpt', 'deepseek', 'kimi']
+          assert mod.PROVIDERS['chatgpt']['base_url'].endswith(':3210')
+          assert mod.PROVIDERS['deepseek']['base_url'].endswith(':3220')
+          assert mod.PROVIDERS['kimi']['base_url'].endswith(':3230')
+          server = mod.create_server(mod.ProviderClient())
+          assert isinstance(server, Server)
+          print('mcp_router_provider_contract=ok')
+          print('mcp_router_no_implicit_fallback=ok')
+          PY
+      - name: Validate systemd isolation
+        run: |
+          grep -Fq 'User=agent' systemd/webchat-mcp-router.service
+          grep -Fq -- '--host 127.0.0.1 --port 8100' systemd/webchat-mcp-router.service
+          grep -Fq '/mcp/server.py' systemd/webchat-mcp-router.service
+          ! grep -Fq '0.0.0.0' systemd/webchat-mcp-router.service

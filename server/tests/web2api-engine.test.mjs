@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
-import { Web2ApiEngine } from "../lib/web2api-engine.mjs";
+import { Web2ApiEngine } from "../providers/chatgpt/web2api-engine.mjs";
 
 async function fakeEngine(handler) {
   const server = createServer(async (req, res) => {

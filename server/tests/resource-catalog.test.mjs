@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ResourceCatalog, normalizeProject, projectUrlFrom } from "../lib/resource-catalog.mjs";
+import { ResourceCatalog, normalizeProject, projectUrlFrom } from "../providers/chatgpt/resource-catalog.mjs";
 
 test("imports project map and resolves aliases, ids and known URLs", async (t) => {
   const runtimeDir = await mkdtemp(join(tmpdir(), "webchat-catalog-"));

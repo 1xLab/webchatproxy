@@ -1,155 +1,119 @@
 # webchatproxy
 
-Standalone API proxy for consuming an authenticated ChatGPT Web account programmatically.
+API-only gateway for authenticated Web AI providers. The current provider is ChatGPT Web; additional providers are added as independent siblings under `server/providers/`.
 
-`webchatproxy` is an independent product. It has no frontend and does not depend on Laravel, PHP, `webagent`, `ws_com_ia`, a browser extension or the OpenAI API.
-
-## Architecture
+## Canonical layout
 
 ```text
-HTTP / SDK clients
-    |
-    v
-webchatproxy API :3210
-    |
-    +--> ResourceCatalog ----> runtime/catalog/projects.json
-    +--> FileStore ----------> runtime/uploads/
-    +--> JobManager ---------> queue / persistence / idempotency
-    |
-    v
+server/
+├── bootstrap.mjs
+├── standalone.mjs
+├── doctor.mjs
+├── catalog.mjs
+├── start.sh
+├── test.sh
+├── providers/
+│   └── chatgpt/
+│       ├── gateway-runtime.mjs
+│       ├── http-api.mjs
+│       ├── job-manager.mjs
+│       ├── web2api-engine.mjs
+│       ├── browser/auth.mjs
+│       ├── engine/
+│       │   ├── install.sh
+│       │   ├── requirements.txt
+│       │   └── web2api_bridge.py
+│       └── mcp/
+│           ├── server.py
+│           └── smoke.py
+└── systemd/
+```
+
+No legacy `server/lib/`, `server/engine/` or root browser shims exist.
+
+## ChatGPT runtime
+
+```text
+HTTP client
+   ↓
+127.0.0.1:3210
+   ↓
+providers/chatgpt/http-api.mjs
+   ↓
+GatewayRuntime / JobManager
+   ↓
 Web2ApiEngine
-    |
-    v
-internal loopback bridge :3211
-    |
-    v
-ChatGPT-Web2API (pinned MIT dependency)
-    |
-    v
-Chrome/CDP + persistent browser-profile
-    |
-    v
+   ↓
+127.0.0.1:3211
+   ↓
+ChatGPT-Web2API pinned engine
+   ↓
+Chrome/CDP :9222
+   ↓
 chatgpt.com
 ```
 
-The normal runtime has one browser owner: the pinned `ChatGPT-Web2API` engine. The removed custom `chatgpt-control.mjs` implementation is not used as a fallback.
+MCP is a separate process on `127.0.0.1:8090` and forwards to the same bridge. It does not own a second Chrome process.
 
-The public API binds to `127.0.0.1:3210` by default. The Python engine bridge is internal and loopback-only.
+## Install
 
-## Requirements
+Requirements:
 
 - Node.js 20+
 - Python 3.11+
-- Google Chrome or Chromium supported by the upstream engine
-- a persistent authenticated ChatGPT Web browser profile
-- Xvfb for headed Chrome on servers without a graphical display
+- Google Chrome
+- Xvfb for headed Chrome on a server without an existing display
 
-The selected engine is pinned in `server/requirements-engine.txt` to a reviewed upstream commit.
-
-## Quick start
+Install is explicit:
 
 ```bash
 cd server
 npm ci
 ./start.sh engine-install
-./start.sh browser-auth
-./start.sh start
-./start.sh doctor-live
+npm run check
+npm test
 ```
 
-`./start.sh start` also installs the pinned engine automatically when `.venv-engine` is missing, provided Python 3.11+ is available.
+Runtime startup never downloads or installs the Python engine. Missing dependencies are a startup error.
 
-## Projects and old chats
+The reviewed upstream is pinned in:
 
-Projects can be discovered from the authenticated ChatGPT account or imported by an administrator. Imported aliases keep API clients independent from ChatGPT display names.
-
-Example `projects.json`:
-
-```json
-{
-  "projects": {
-    "auditor": {
-      "id": "g-p-0123456789abcdef",
-      "name": "Auditor",
-      "aliases": ["bca", "detran"]
-    },
-    "finance": "g-p-fedcba9876543210"
-  }
-}
+```text
+server/providers/chatgpt/engine/requirements.txt
 ```
 
-CLI import:
+## Authentication
+
+Interactive login is maintenance, not normal runtime:
 
 ```bash
 cd server
-npm run catalog -- import projects.json
-npm run catalog -- list
-npm run catalog -- resolve auditor
+./start.sh browser-auth
 ```
 
-API import/sync:
+The gateway must be stopped while the canonical browser profile is opened for manual login.
 
-```text
-POST /v1/projects/import
-POST /v1/projects/sync
-GET  /v1/projects
-GET  /v1/projects?live=1
-```
-
-Conversation history:
-
-```text
-GET /v1/conversations
-GET /v1/conversations/{conversation_id}
-GET /v1/projects/{project-or-alias}/conversations
-GET /v1/projects/{project-or-alias}/files
-```
-
-## Chat API
-
-OpenAI-style synchronous request:
+## Start and diagnostics
 
 ```bash
-curl -X POST http://127.0.0.1:3210/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "auto",
-    "project": "auditor",
-    "messages": [{"role":"user","content":"Responda apenas: API_OK"}]
-  }'
+./start.sh start
+./start.sh status
+npm run doctor:control
+npm run doctor:live
 ```
 
-Continue an existing ChatGPT conversation:
+Default ports:
 
-```json
-{
-  "model": "auto",
-  "conversation_id": "existing-chat-id",
-  "messages": [
-    {"role": "user", "content": "Continue a análise."}
-  ],
-  "new_conversation": false
-}
+```text
+3210  public loopback HTTP API
+3211  internal ChatGPT engine bridge
+9222  ChatGPT Chrome CDP
+8090  ChatGPT MCP SSE
 ```
-
-`GET /v1/models` returns the model catalog read from the authenticated ChatGPT account through the engine.
-
-## File staging
-
-`POST /v1/files` accepts a raw binary body and stores it under `runtime/uploads/` with size, MIME type and SHA-256 metadata.
-
-```bash
-curl -X POST http://127.0.0.1:3210/v1/files \
-  -H 'Content-Type: application/pdf' \
-  -H 'X-Filename: evidence.pdf' \
-  --data-binary @evidence.pdf
-```
-
-Important current boundary: the pinned ChatGPT-Web2API engine does not expose a safe per-message attachment operation. Therefore staging works, but using an `attachments` array in a chat request returns HTTP 501. The proxy fails closed rather than sending a prompt without the expected document.
-
-Persistent Project knowledge-file upload/update/delete is also not claimed as implemented. `GET /v1/projects/{project}/files` reads Project file metadata.
 
 ## API
+
+Primary endpoints:
 
 ```text
 GET    /health
@@ -174,54 +138,43 @@ DELETE /v1/jobs/{id}
 POST   /v1/chat/completions
 ```
 
-Diagnostic endpoints remain under `/v1/debug/*`. Browser-DOM and screenshot debug calls intentionally return 501 because the upstream engine owns Chrome; engine diagnostics are exposed instead.
+Write and destructive ChatGPT operations remain controlled by the upstream-compatible gates:
+
+```text
+W2A_ENABLE_WRITE
+W2A_ENABLE_DESTRUCTIVE
+```
+
+## Provider isolation
+
+Future providers are not added inside the ChatGPT implementation. Each provider receives its own directory and independently owned process state, browser profile, CDP/engine ports and concurrency policy.
+
+```text
+providers/
+├── chatgpt/
+├── deepseek/
+├── kimi/
+└── ...
+```
+
+This allows providers and independent conversations to execute concurrently without a global browser or provider lock.
 
 ## Local state
 
 Never commit:
 
 ```text
-server/.venv-engine/
+server/.venv-chatgpt/
 server/browser-profile/
 server/runtime/
 ```
 
 ## Deployment
 
-The repository name is independent from the installed runtime path. Existing production services remain under `/home/agent/server`.
+Canonical installed path:
 
-```bash
-WEBCHAT_DEPLOY_HOST=server.example \
-WEBCHAT_DEPLOY_USER=agent \
-./deploy.sh all
+```text
+/home/agent/webchatproxy
 ```
 
-By default, `server/` is synchronized to `/home/$WEBCHAT_DEPLOY_USER/server/`. `browser-profile/` and `runtime/` are excluded from rsync so deploys preserve authentication and operational state.
-
-Before restarting production after this engine migration, verify Python 3.11+ and install the engine:
-
-```bash
-cd /home/agent/server
-./start.sh engine-install
-npm run check
-npm test
-```
-
-Then restart the existing gateway service and validate:
-
-```bash
-curl -sS http://127.0.0.1:3210/health
-curl -sS http://127.0.0.1:3210/ready
-npm run doctor:control
-```
-
-## Development
-
-```bash
-cd server
-npm run check
-npm test
-npm run doctor:contract
-```
-
-CI validates that the custom ChatGPT backend implementation remains removed and that the public Node API can operate independently from any web application.
+`deploy.sh` preserves `browser-profile/` and `runtime/`, installs the provider engine explicitly, runs checks/tests, and only then restarts the service.

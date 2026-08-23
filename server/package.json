@@ -1,6 +1,6 @@
 {
   "name": "webchatproxy",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,13 +13,10 @@
     "doctor:live": "node doctor.mjs --live",
     "doctor:contract": "node doctor.mjs --contract",
     "catalog": "node catalog.mjs",
-    "engine:install": "bash engine/install.sh",
-    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check browser-auth.mjs && node --check browser-backend.mjs && node --check doctor.mjs && node --check catalog.mjs && node --check lib/gateway-runtime.mjs && node --check lib/http-api.mjs && node --check lib/event-journal.mjs && node --check lib/job-manager.mjs && node --check lib/web2api-engine.mjs && node --check lib/resource-catalog.mjs && node --check lib/file-store.mjs && node --check providers/chatgpt/browser/auth.mjs && node --check providers/chatgpt/browser/backend.mjs && node --check providers/chatgpt/web2api-engine.mjs && python3 -m py_compile engine/web2api_bridge.py engine/mcp_proxy.py engine/mcp_smoke.py providers/chatgpt/engine/web2api_bridge.py providers/chatgpt/mcp/mcp_proxy.py providers/chatgpt/mcp/mcp_smoke.py",
+    "engine:install": "bash providers/chatgpt/engine/install.sh",
+    "mcp:smoke": ".venv-chatgpt/bin/python providers/chatgpt/mcp/smoke.py",
+    "check": "node --check bootstrap.mjs && node --check standalone.mjs && node --check doctor.mjs && node --check catalog.mjs && node --check providers/chatgpt/gateway-runtime.mjs && node --check providers/chatgpt/http-api.mjs && node --check providers/chatgpt/event-journal.mjs && node --check providers/chatgpt/job-manager.mjs && node --check providers/chatgpt/web2api-engine.mjs && node --check providers/chatgpt/resource-catalog.mjs && node --check providers/chatgpt/file-store.mjs && node --check providers/chatgpt/browser/auth.mjs && python3 -m py_compile providers/chatgpt/engine/web2api_bridge.py providers/chatgpt/mcp/server.py providers/chatgpt/mcp/smoke.py",
     "test": "node --test tests/*.test.mjs"
   },
-  "dependencies": {
-    "@kudoai/chatgpt.js": "^4.15.6",
-    "playwright": "^1.61.1",
-    "ws": "8.21.3"
-  }
+  "dependencies": {}
 }

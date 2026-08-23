@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# webchatproxy — API gateway with ChatGPT-Web2API CDP engine.
-# Usage: ./start.sh [start|stop|restart|status|doctor|doctor-live|engine-install|browser-install|browser-auth|logs]
+# webchatproxy — ChatGPT provider gateway.
+# Usage: ./start.sh [start|stop|restart|status|doctor|doctor-live|engine-install|browser-auth|logs]
 set -euo pipefail
 
 cd "$(dirname "$0")"
 CORE_DIR="$(pwd -P)"
+CHATGPT_DIR="$CORE_DIR/providers/chatgpt"
+ENGINE_DIR="$CHATGPT_DIR/engine"
 
 reject_public_webroot() {
   local label="$1"
@@ -29,23 +31,19 @@ DISPLAY_FILE="$RUNTIME_DIR/display"
 HOST="${WEBCHAT_HOST:-127.0.0.1}"
 WEBCHAT_PORT="${WEBCHAT_PORT:-${PORT:-3210}}"
 NOFILE_TARGET="${WEBCHAT_NOFILE:-65535}"
-ENGINE_VENV="${WEBCHAT_ENGINE_VENV:-$CORE_DIR/.venv-engine}"
+ENGINE_VENV="${WEBCHAT_ENGINE_VENV:-$CORE_DIR/.venv-chatgpt}"
 ENGINE_PYTHON="${WEBCHAT_ENGINE_PYTHON:-$ENGINE_VENV/bin/python}"
+ENGINE_BRIDGE="${WEBCHAT_ENGINE_BRIDGE:-$ENGINE_DIR/web2api_bridge.py}"
+HEADLESS="${WEBCHAT_HEADLESS:-${REMOTE_IA_HEADLESS:-0}}"
+XVFB_SCREEN="${WEBCHAT_XVFB_SCREEN:-1920x1080x24}"
 
 reject_public_webroot "gateway core" "$CORE_DIR"
 reject_public_webroot "gateway runtime" "$RUNTIME_DIR"
 reject_public_webroot "browser profile" "$PROFILE_DIR"
 
-# The ChatGPT-Web2API engine owns Chrome. The Node gateway and its Python child
-# run in one process group and share the same DISPLAY/profile/runtime. Playwright
-# is retained only for the explicit browser-auth maintenance command.
-BROWSER_CHANNEL="${REMOTE_IA_BROWSER_CHANNEL:-}"
-BROWSER_LABEL="${BROWSER_CHANNEL:-engine-chrome}"
-HEADLESS="${WEBCHAT_HEADLESS:-${REMOTE_IA_HEADLESS:-0}}"
-XVFB_SCREEN="${WEBCHAT_XVFB_SCREEN:-1920x1080x24}"
-
 export WEBCHAT_PORT WEBCHAT_HOST="$HOST" WEBCHAT_RUNTIME_DIR="$RUNTIME_DIR"
 export WEBCHAT_PROFILE_DIR="$PROFILE_DIR" WEBCHAT_HEADLESS="$HEADLESS"
+export WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON" WEBCHAT_ENGINE_BRIDGE="$ENGINE_BRIDGE"
 HEALTH_URL="http://${HOST}:${WEBCHAT_PORT}/health"
 
 mkdir -p "$RUNTIME_DIR/logs" "$RUNTIME_DIR/debug" "$RUNTIME_DIR/jobs"
@@ -63,6 +61,17 @@ port_busy() {
     return $?
   fi
   curl -fsS --max-time 1 "$HEALTH_URL" >/dev/null 2>&1
+}
+
+ensure_node_runtime() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: Node.js 20+ is required." >&2
+    return 78
+  fi
+  if ! node -e 'const major=Number(process.versions.node.split(".")[0]); process.exit(major >= 20 ? 0 : 1)' >/dev/null 2>&1; then
+    echo "ERROR: Node.js 20+ is required; found $(node --version)." >&2
+    return 78
+  fi
 }
 
 ensure_nofile_limit() {
@@ -93,29 +102,25 @@ ensure_nofile_limit() {
   fi
 }
 
-ensure_dependencies() {
-  if [ ! -d node_modules ]; then
-    if [ -f package-lock.json ]; then npm ci; else npm install; fi
-  fi
-}
-
 install_engine() {
-  WEBCHAT_ENGINE_VENV="$ENGINE_VENV" bash engine/install.sh
+  WEBCHAT_ENGINE_VENV="$ENGINE_VENV" bash "$ENGINE_DIR/install.sh"
 }
 
 ensure_engine_dependencies() {
-  if [ -x "$ENGINE_PYTHON" ] && "$ENGINE_PYTHON" -c 'import chatgpt_web2api' >/dev/null 2>&1; then
-    export WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON"
-    return 0
-  fi
-  if [ -n "${WEBCHAT_ENGINE_PYTHON:-}" ]; then
-    echo "ERROR: WEBCHAT_ENGINE_PYTHON cannot import chatgpt_web2api: $WEBCHAT_ENGINE_PYTHON" >&2
+  if [ ! -x "$ENGINE_PYTHON" ]; then
+    echo "ERROR: ChatGPT engine is not installed at $ENGINE_PYTHON" >&2
+    echo "Run ./start.sh engine-install during deployment; runtime startup never downloads dependencies." >&2
     return 78
   fi
-  echo "Installing pinned ChatGPT-Web2API engine..."
-  install_engine
-  ENGINE_PYTHON="$ENGINE_VENV/bin/python"
-  export WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON"
+  if ! "$ENGINE_PYTHON" -c 'import chatgpt_web2api' >/dev/null 2>&1; then
+    echo "ERROR: $ENGINE_PYTHON cannot import chatgpt_web2api" >&2
+    echo "Run ./start.sh engine-install during deployment." >&2
+    return 78
+  fi
+  if [ ! -f "$ENGINE_BRIDGE" ]; then
+    echo "ERROR: ChatGPT engine bridge not found: $ENGINE_BRIDGE" >&2
+    return 78
+  fi
 }
 
 ensure_headed_runtime() {
@@ -129,14 +134,6 @@ ensure_headed_runtime() {
     echo "ERROR: setsid is required to supervise the gateway/Xvfb process group."
     return 1
   fi
-}
-
-install_browser() {
-  ensure_dependencies
-  echo "Installing Playwright Chromium for the browser-auth maintenance utility..."
-  npx playwright install chromium
-  echo
-  npx playwright install --list
 }
 
 stop_service() {
@@ -167,8 +164,8 @@ start_service() {
     return 2
   fi
 
+  ensure_node_runtime
   ensure_nofile_limit
-  ensure_dependencies
   ensure_engine_dependencies
   ensure_headed_runtime
 
@@ -179,38 +176,38 @@ start_service() {
   rm -f "$DISPLAY_FILE"
 
   echo "Starting webchatproxy on ${HOST}:${WEBCHAT_PORT}..."
-  echo "Core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR engine_python=$WEBCHAT_ENGINE_PYTHON nofile=$(ulimit -Sn)"
+  echo "provider=chatgpt runtime=$RUNTIME_DIR profile=$PROFILE_DIR engine_python=$ENGINE_PYTHON nofile=$(ulimit -Sn)"
 
   if [ "$HEADLESS" = "1" ]; then
-    echo "Engine=ChatGPT-Web2API headless=1 display=none"
     nohup setsid env \
       WEBCHAT_PORT="$WEBCHAT_PORT" \
       WEBCHAT_HOST="$HOST" \
       WEBCHAT_RUNTIME_DIR="$RUNTIME_DIR" \
       WEBCHAT_PROFILE_DIR="$PROFILE_DIR" \
-      WEBCHAT_ENGINE_PYTHON="$WEBCHAT_ENGINE_PYTHON" \
+      WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON" \
+      WEBCHAT_ENGINE_BRIDGE="$ENGINE_BRIDGE" \
       WEBCHAT_HEADLESS=1 \
       node bootstrap.mjs >> "$LOG_FILE" 2>&1 &
   elif [ -n "${DISPLAY:-}" ]; then
-    echo "Engine=ChatGPT-Web2API headless=0 display=$DISPLAY (external)"
     printf '%s\n' "$DISPLAY" > "$DISPLAY_FILE"
     nohup setsid env \
       WEBCHAT_PORT="$WEBCHAT_PORT" \
       WEBCHAT_HOST="$HOST" \
       WEBCHAT_RUNTIME_DIR="$RUNTIME_DIR" \
       WEBCHAT_PROFILE_DIR="$PROFILE_DIR" \
-      WEBCHAT_ENGINE_PYTHON="$WEBCHAT_ENGINE_PYTHON" \
+      WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON" \
+      WEBCHAT_ENGINE_BRIDGE="$ENGINE_BRIDGE" \
       WEBCHAT_HEADLESS=0 \
       DISPLAY="$DISPLAY" \
       node bootstrap.mjs >> "$LOG_FILE" 2>&1 &
   else
-    echo "Engine=ChatGPT-Web2API headless=0 display=xvfb-auto"
     nohup setsid env \
       WEBCHAT_PORT="$WEBCHAT_PORT" \
       WEBCHAT_HOST="$HOST" \
       WEBCHAT_RUNTIME_DIR="$RUNTIME_DIR" \
       WEBCHAT_PROFILE_DIR="$PROFILE_DIR" \
-      WEBCHAT_ENGINE_PYTHON="$WEBCHAT_ENGINE_PYTHON" \
+      WEBCHAT_ENGINE_PYTHON="$ENGINE_PYTHON" \
+      WEBCHAT_ENGINE_BRIDGE="$ENGINE_BRIDGE" \
       WEBCHAT_HEADLESS=0 \
       WEBCHAT_DISPLAY_FILE="$DISPLAY_FILE" \
       xvfb-run -a -e "$XVFB_LOG_FILE" \
@@ -227,7 +224,7 @@ start_service() {
       local active_display="none"
       if [ -s "$DISPLAY_FILE" ]; then active_display="$(cat "$DISPLAY_FILE")"; fi
       echo "webchatproxy ready: $HEALTH_URL (PID $pid)"
-      echo "Runtime engine=chatgpt-web2api headless=$HEADLESS display=$active_display nofile=$(ulimit -Sn)"
+      echo "provider=chatgpt engine=chatgpt-web2api headless=$HEADLESS display=$active_display nofile=$(ulimit -Sn)"
       node doctor.mjs || true
       return 0
     fi
@@ -251,20 +248,22 @@ start_service() {
 }
 
 browser_auth() {
+  ensure_node_runtime
   ensure_nofile_limit
-  ensure_dependencies
   if is_running; then
     echo "Stopping gateway before browser authentication so the same browser-profile is not opened twice..."
     stop_service
   fi
 
-  echo "Starting headed Chromium with the canonical browser-profile for authentication maintenance..."
-  echo "profile=$PROFILE_DIR"
-  echo "nofile=$(ulimit -Sn)"
+  local auth_script="$CHATGPT_DIR/browser/auth.mjs"
+  if [ ! -f "$auth_script" ]; then
+    echo "ERROR: ChatGPT browser authentication entrypoint not found: $auth_script" >&2
+    return 78
+  fi
 
+  echo "Starting Google Chrome authentication session with profile=$PROFILE_DIR"
   if [ -n "${DISPLAY:-}" ]; then
-    echo "display=$DISPLAY (external)"
-    WEBCHAT_PROFILE_DIR="$PROFILE_DIR" WEBCHAT_HEADLESS=0 DISPLAY="$DISPLAY" node browser-auth.mjs
+    WEBCHAT_PROFILE_DIR="$PROFILE_DIR" WEBCHAT_HEADLESS=0 DISPLAY="$DISPLAY" node "$auth_script"
     return
   fi
 
@@ -273,21 +272,20 @@ browser_auth() {
     return 1
   fi
 
-  echo "display=xvfb-auto"
   WEBCHAT_PROFILE_DIR="$PROFILE_DIR" WEBCHAT_HEADLESS=0 xvfb-run -a -e "$XVFB_LOG_FILE" \
     -s "-screen 0 $XVFB_SCREEN -nolisten tcp -noreset" \
-    node browser-auth.mjs
+    node "$auth_script"
 }
 
 status_service() {
   local active_display="none"
   if [ -s "$DISPLAY_FILE" ]; then active_display="$(cat "$DISPLAY_FILE")"; fi
   if is_running; then
-    echo "running pid=$(cat "$PID_FILE") host=$HOST port=$WEBCHAT_PORT engine=chatgpt-web2api headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
+    echo "running pid=$(cat "$PID_FILE") host=$HOST port=$WEBCHAT_PORT provider=chatgpt engine=chatgpt-web2api headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
     curl -fsS --max-time 3 "$HEALTH_URL" || true
     echo
   else
-    echo "stopped host=$HOST port=$WEBCHAT_PORT engine=chatgpt-web2api headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
+    echo "stopped host=$HOST port=$WEBCHAT_PORT provider=chatgpt engine=chatgpt-web2api headless=$HEADLESS display=$active_display core=$CORE_DIR runtime=$RUNTIME_DIR profile=$PROFILE_DIR"
     return 1
   fi
 }
@@ -298,11 +296,10 @@ case "$cmd" in
   restart) stop_service; start_service ;;
   stop) stop_service; echo "webchatproxy stopped." ;;
   status) status_service ;;
-  doctor) ensure_dependencies; node doctor.mjs ;;
-  doctor-live) ensure_dependencies; node doctor.mjs --live ;;
+  doctor) ensure_node_runtime; node doctor.mjs ;;
+  doctor-live) ensure_node_runtime; node doctor.mjs --live ;;
   engine-install) install_engine ;;
-  browser-install) install_browser ;;
   browser-auth) browser_auth ;;
   logs) tail -n "${LINES:-200}" "$LOG_FILE" ;;
-  *) echo "Usage: $0 [start|stop|restart|status|doctor|doctor-live|engine-install|browser-install|browser-auth|logs]"; exit 2 ;;
+  *) echo "Usage: $0 [start|stop|restart|status|doctor|doctor-live|engine-install|browser-auth|logs]"; exit 2 ;;
 esac

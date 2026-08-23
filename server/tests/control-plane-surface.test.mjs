@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -12,7 +12,7 @@ async function text(path) {
 }
 
 test("public gateway keeps Projects, conversations and files API surface", async () => {
-  const httpApi = await text("lib/http-api.mjs");
+  const httpApi = await text("providers/chatgpt/http-api.mjs");
   for (const required of [
     'url.pathname === "/v1/projects"',
     'url.pathname === "/v1/projects/import"',
@@ -29,7 +29,7 @@ test("public gateway keeps Projects, conversations and files API surface", async
 });
 
 test("engine bridge delegates control-plane reads to pinned ChatGPT-Web2API library", async () => {
-  const bridge = await text("engine/web2api_bridge.py");
+  const bridge = await text("providers/chatgpt/engine/web2api_bridge.py");
   for (const symbol of [
     "do_list_models",
     "do_list_projects",
@@ -49,5 +49,17 @@ test("engine bridge delegates control-plane reads to pinned ChatGPT-Web2API libr
     'add_post("/v1/chat/completions"',
   ]) {
     assert.ok(bridge.includes(route), `missing loopback engine route: ${route}`);
+  }
+});
+
+test("legacy shim paths are absent", async () => {
+  for (const path of [
+    "lib",
+    "engine",
+    "browser-auth.mjs",
+    "browser-backend.mjs",
+    "requirements-engine.txt",
+  ]) {
+    await assert.rejects(access(join(serverDir, path)), undefined, `legacy path still exists: ${path}`);
   }
 });

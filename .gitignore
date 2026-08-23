@@ -1,11 +1,10 @@
 node_modules/
 server/node_modules/
-server/.venv-engine/
-server/engine/__pycache__/
+server/.venv-chatgpt/
+server/providers/**/__pycache__/
 server/browser-profile/
 server/runtime/
 server/*.log
-server/.internal-browser.pid
 server/.webchat-gateway.pid
 cookies.txt
 .DS_Store

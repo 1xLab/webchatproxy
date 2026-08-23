@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { once } from "node:events";
-import { createGatewayHttpServer } from "../lib/http-api.mjs";
+import { createGatewayHttpServer } from "../providers/chatgpt/http-api.mjs";
 
 function fakeRuntime({ token = "" } = {}) {
   const events = [];
@@ -30,7 +30,7 @@ function fakeRuntime({ token = "" } = {}) {
       host: "127.0.0.1",
       port: 0,
       cors_origin: null,
-      backend: "playwright",
+      backend: "chatgpt-web2api",
       browser_start_disabled: true,
     },
     jobs,
@@ -38,10 +38,7 @@ function fakeRuntime({ token = "" } = {}) {
     assertReady() {},
     health: () => ({ status: "ok", service: "webchat-gateway", browser: { running: false, page_ready: false }, account, jobs: jobs.stats(), port: 0 }),
     account: () => ({ ...account }),
-    prepareJobPayload: async (payload) => ({
-      ...payload,
-      messages: [{ role: "system", content: "plan=free\nsubscription_active=false" }, ...(payload.messages || [])],
-    }),
+    prepareJobPayload: async (payload) => ({ ...payload }),
     ready: async () => ({ ready: false, status: "degraded" }),
     debugSnapshot: async () => ({ service: "webchat-gateway", account, browser: { network_complete: false }, jobs: jobs.stats() }),
     doctor: async () => ({ ok: false, status: "degraded", account }),

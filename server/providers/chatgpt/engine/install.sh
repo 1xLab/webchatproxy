@@ -3,9 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../../.."
 BASE_DIR="$(pwd -P)"
-PROVIDER_DIR="$BASE_DIR/providers/chatgpt"
-VENV="${WEBCHAT_ENGINE_VENV:-$BASE_DIR/.venv-engine}"
-REQUIREMENTS="$PROVIDER_DIR/requirements.txt"
+ENGINE_DIR="$BASE_DIR/providers/chatgpt/engine"
+VENV="${WEBCHAT_ENGINE_VENV:-$BASE_DIR/.venv-chatgpt}"
+REQUIREMENTS="$ENGINE_DIR/requirements.txt"
 
 select_python() {
   if [ -n "${WEBCHAT_ENGINE_BOOTSTRAP_PYTHON:-}" ]; then
@@ -33,12 +33,10 @@ if [ -z "$PYTHON_BOOTSTRAP" ]; then
   exit 78
 fi
 
-"$PYTHON_BOOTSTRAP" - <<'PY'
-import sys
-if sys.version_info < (3, 11):
-    raise SystemExit(f"ERROR: Python 3.11+ required; found {sys.version.split()[0]}")
-print(f"Bootstrap Python: {sys.version.split()[0]}")
-PY
+if [ ! -f "$REQUIREMENTS" ]; then
+  echo "ERROR: missing provider requirements: $REQUIREMENTS" >&2
+  exit 78
+fi
 
 if [ ! -x "$VENV/bin/python" ]; then
   "$PYTHON_BOOTSTRAP" -m venv "$VENV"
@@ -49,8 +47,8 @@ fi
 "$VENV/bin/python" - <<'PY'
 import chatgpt_web2api
 import sys
-print(f"ChatGPT-Web2API engine import OK on Python {sys.version.split()[0]}")
+print(f"ChatGPT-Web2API import OK on Python {sys.version.split()[0]}")
 PY
 
-printf 'Engine Python: %s\n' "$VENV/bin/python"
+printf 'ChatGPT engine Python: %s\n' "$VENV/bin/python"
 printf 'Pinned requirements: %s\n' "$REQUIREMENTS"

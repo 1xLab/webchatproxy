@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { JobManager } from "../lib/job-manager.mjs";
+import { JobManager } from "../providers/chatgpt/job-manager.mjs";
 
 class JournalStub { constructor(){this.events=[];} record(event,data={},level="info"){this.events.push({event,level,...data});} }
 class FakeBackend {

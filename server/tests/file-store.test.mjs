@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { FileStore } from "../lib/file-store.mjs";
+import { FileStore } from "../providers/chatgpt/file-store.mjs";
 
 test("streams an attachment to runtime with hash and metadata", async (t) => {
   const runtimeDir = await mkdtemp(join(tmpdir(), "webchat-files-"));

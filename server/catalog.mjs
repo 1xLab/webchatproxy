@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { ResourceCatalog } from "./lib/resource-catalog.mjs";
+import { ResourceCatalog } from "./providers/chatgpt/resource-catalog.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runtimeDir = process.env.WEBCHAT_RUNTIME_DIR || join(here, "runtime");
@@ -36,5 +36,5 @@ if (command === "resolve") {
   process.exit(project ? 0 : 1);
 }
 
-console.error("Usage: node catalog.mjs [list|import <projects.json>|resolve <project>] ");
+console.error("Usage: node catalog.mjs [list|import <projects.json>|resolve <project>]");
 process.exit(2);

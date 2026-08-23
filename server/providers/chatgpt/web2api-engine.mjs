@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const PROVIDER_DIR = dirname(fileURLToPath(import.meta.url));
 
 function engineError(message, code = "ENGINE_UPSTREAM_ERROR", status = null, details = null) {
   const error = new Error(message);
@@ -38,8 +41,8 @@ export class Web2ApiEngine {
     this.port = Number(env.WEBCHAT_ENGINE_PORT || 3211);
     this.baseUrl = env.WEBCHAT_ENGINE_URL || `http://${this.host}:${this.port}`;
     this.cdpPort = Number(env.WEBCHAT_ENGINE_CDP_PORT || 9222);
-    this.python = env.WEBCHAT_ENGINE_PYTHON || join(baseDir, ".venv-engine", "bin", "python");
-    this.bridge = env.WEBCHAT_ENGINE_BRIDGE || join(baseDir, "engine", "web2api_bridge.py");
+    this.python = env.WEBCHAT_ENGINE_PYTHON || join(baseDir, ".venv-chatgpt", "bin", "python");
+    this.bridge = env.WEBCHAT_ENGINE_BRIDGE || join(PROVIDER_DIR, "engine", "web2api_bridge.py");
     this.autoStart = env.WEBCHAT_ENGINE_AUTOSTART !== "0";
     this.child = null;
     this.started = false;
@@ -93,9 +96,9 @@ export class Web2ApiEngine {
   #spawnBridge() {
     if (this.child && this.child.exitCode == null) return;
     if (!existsSync(this.python)) {
-      throw engineError(`engine python not installed: ${this.python}; run ./start.sh engine-install`, "ENGINE_NOT_INSTALLED");
+      throw engineError(`ChatGPT engine Python not installed: ${this.python}; run ./start.sh engine-install`, "ENGINE_NOT_INSTALLED");
     }
-    if (!existsSync(this.bridge)) throw engineError(`engine bridge not found: ${this.bridge}`, "ENGINE_NOT_INSTALLED");
+    if (!existsSync(this.bridge)) throw engineError(`ChatGPT engine bridge not found: ${this.bridge}`, "ENGINE_NOT_INSTALLED");
 
     const childEnv = {
       ...process.env,

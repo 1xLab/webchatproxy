@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GatewayRuntime } from "./lib/gateway-runtime.mjs";
-import { createGatewayHttpServer } from "./lib/http-api.mjs";
+import { GatewayRuntime } from "./providers/chatgpt/gateway-runtime.mjs";
+import { createGatewayHttpServer } from "./providers/chatgpt/http-api.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const runtime = await new GatewayRuntime({ baseDir: __dirname }).init();
@@ -20,10 +20,6 @@ server.listen(port, host, () => {
   runtime.journal.record("gateway_listening", { host, port, pid: process.pid, backend: "chatgpt-web2api" });
   console.log(`[gateway] listening on http://${host}:${port}`);
   runtime.startEngine().catch((error) => {
-    // A failed engine must not be relaunched implicitly by every subsequent API
-    // request. That behavior creates Chrome storms and long HTTP timeouts. Keep
-    // the gateway alive/degraded, but fail engine-dependent requests fast until
-    // the service is explicitly restarted after the underlying problem is fixed.
     if (runtime.engine) runtime.engine.autoStart = false;
     runtime.journal.record("engine_start_failed", {
       error: error.message,

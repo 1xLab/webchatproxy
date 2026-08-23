@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { GatewayRuntime } from "../lib/gateway-runtime.mjs";
+import { GatewayRuntime } from "../providers/chatgpt/gateway-runtime.mjs";
 
 test("persisted account state is observable but never injected into ChatGPT prompts", async () => {
   const root = await mkdtemp(join(tmpdir(), "webchat-account-"));

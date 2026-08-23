@@ -18,6 +18,7 @@ concurrency:
 
 env:
   W2A_PIN: 497527dceabfa3f95961e23c291e618c5570f1ac
+  DEEPSEEK_PIN: 9b62d6a17ba502fa6aefa2dceb527d1e925aa6ce
 
 jobs:
   gateway:
@@ -50,7 +51,7 @@ jobs:
         run: npm run doctor:contract
 
       - name: Validate shell entrypoints
-        run: bash -n start.sh remote_ia.sh test.sh providers/chatgpt/engine/install.sh
+        run: bash -n start.sh remote_ia.sh test.sh providers/chatgpt/engine/install.sh providers/deepseek/engine/install.sh providers/deepseek/engine/start.sh providers/deepseek/engine/login.sh
 
       - name: Enforce canonical provider layout
         working-directory: .
@@ -65,6 +66,13 @@ jobs:
           test -f server/providers/chatgpt/engine/requirements.txt
           test -f server/providers/chatgpt/mcp/server.py
           test -f server/providers/chatgpt/mcp/smoke.py
+          test -d server/providers/deepseek
+          test -f server/providers/deepseek/engine/UPSTREAM.lock
+          test -x server/providers/deepseek/engine/install.sh
+          test -x server/providers/deepseek/engine/start.sh
+          test -x server/providers/deepseek/engine/login.sh
+          test -f server/systemd/webchat-deepseek.service
+          grep -Fq "$DEEPSEEK_PIN" server/providers/deepseek/engine/UPSTREAM.lock
           test ! -e server/lib
           test ! -e server/engine
           test ! -e server/browser-auth.mjs
@@ -126,7 +134,7 @@ jobs:
           set -euo pipefail
           node -e 'const p=require("./package.json"); if(Object.keys(p.dependencies||{}).length) { console.error(p.dependencies); process.exit(1) }'
           ! grep -RInE 'playwright|@kudoai/chatgpt\.js' . \
-            --exclude='package-lock.json' --exclude-dir='.venv-chatgpt'
+            --exclude='package-lock.json' --exclude-dir='.venv-chatgpt' --exclude-dir='.vendor'
 
       - name: Proxy must not depend on an external web application
         working-directory: .
@@ -179,7 +187,7 @@ jobs:
           curl -fsS "${AUTH[@]}" http://127.0.0.1:3218/v1/projects | grep -q 'g-p-ci123'
 
   upstream-engine:
-    name: Pinned upstream engine test suite
+    name: Pinned ChatGPT upstream engine test suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-python@v5
@@ -203,9 +211,28 @@ jobs:
           W2A_E2E_RUN: '0'
         run: pytest -m 'not e2e' -q
 
+  deepseek-upstream:
+    name: Pinned DeepSeek provider test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install and verify exact DeepSeek upstream through provider installer
+        working-directory: server
+        env:
+          DEEPSEEK_VENDOR_DIR: ${{ runner.temp }}/deepseek-web-api
+        run: |
+          set -euo pipefail
+          ./providers/deepseek/engine/install.sh
+          test "$(git -C "$DEEPSEEK_VENDOR_DIR" rev-parse HEAD)" = "$DEEPSEEK_PIN"
+          test -f "$DEEPSEEK_VENDOR_DIR/dist/index.js"
+          grep -Fq "$DEEPSEEK_PIN" providers/deepseek/engine/UPSTREAM.lock
+
   production-preflight:
     name: Authenticated production preflight
-    needs: [gateway, upstream-engine]
+    needs: [gateway, upstream-engine, deepseek-upstream]
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_preflight == true && vars.WEBCHAT_SELF_HOSTED_PREFLIGHT == '1' }}
     runs-on: [self-hosted, linux, webchatproxy]
     timeout-minutes: 20
@@ -215,6 +242,7 @@ jobs:
         run: |
           set -euo pipefail
           test -d providers/chatgpt
+          test -d providers/deepseek
           test -d browser-profile
           test -d runtime
           test -x .venv-chatgpt/bin/python

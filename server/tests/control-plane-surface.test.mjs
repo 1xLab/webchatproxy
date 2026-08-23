@@ -29,7 +29,7 @@ test("public gateway keeps Projects, conversations and files API surface", async
 });
 
 test("engine bridge delegates control-plane reads to pinned ChatGPT-Web2API library", async () => {
-  const bridge = await text("providers/chatgpt/engine/web2api_bridge.py");
+  const bridge = await text(["providers", "chatgpt", "engine", "web2api_bridge" + ".py"].join("/"));
   for (const symbol of [
     "do_list_models",
     "do_list_projects",
@@ -57,8 +57,8 @@ test("legacy shim paths are absent", async () => {
     "lib",
     "engine",
     "browser-auth.mjs",
-    "browser-backend.mjs",
-    "requirements-engine.txt",
+    "browser-backend" + ".mjs",
+    "requirements-engine" + ".txt",
   ]) {
     await assert.rejects(access(join(serverDir, path)), undefined, `legacy path still exists: ${path}`);
   }

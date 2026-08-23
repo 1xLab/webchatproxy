@@ -41,7 +41,6 @@ from chatgpt_web2api.mcp_server import (
     do_delete_memory,
     do_delete_project,
     do_get_conversation,
-    do_list_conversations,
     do_list_gpts,
     do_list_memories,
     do_list_models,
@@ -79,6 +78,20 @@ def int_arg(value: Any, default: int, minimum: int = 0, maximum: int | None = No
     if maximum is not None:
         parsed = min(maximum, parsed)
     return parsed
+
+
+async def list_conversations(driver: CDPDriver, offset: int, limit: int) -> list[dict[str, Any]]:
+    """Fetch and normalize recent conversations via the pinned CDPDriver API."""
+    raw = await driver.get_conversations(offset=offset, limit=limit)
+    return [
+        {
+            "id": item.get("id", ""),
+            "title": item.get("title", "Untitled"),
+            "update_time": item.get("update_time"),
+            "gizmo_id": item.get("gizmo_id"),
+        }
+        for item in raw
+    ]
 
 
 def text_content(content: Any) -> str:
@@ -348,7 +361,9 @@ class EngineBridge:
         project_id = (request.query.get("project_id") or "").strip() or None
         all_items = env_bool_value(request.query.get("all"), False)
         if not project_id:
-            return web.json_response(await do_list_conversations(driver, {"offset": offset, "limit": limit}))
+            return web.json_response({
+                "conversations": await list_conversations(driver, offset, limit),
+            })
 
         matched: list[dict[str, Any]] = []
         scan_offset = 0
@@ -356,8 +371,7 @@ class EngineBridge:
         max_pages = 100 if all_items else 20
         pages = 0
         while pages < max_pages:
-            payload = await do_list_conversations(driver, {"offset": scan_offset, "limit": batch})
-            page = payload.get("conversations", [])
+            page = await list_conversations(driver, scan_offset, batch)
             pages += 1
             if not page:
                 break

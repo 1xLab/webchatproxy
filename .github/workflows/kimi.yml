@@ -38,7 +38,9 @@ jobs:
           bash -n providers/kimi/engine/install.sh providers/kimi/engine/start.sh providers/kimi/engine/import-token.sh
           grep -Fq "$KIMI_PIN" providers/kimi/engine/UPSTREAM.lock
           grep -Fq 'AuthService/RefreshToken' providers/kimi/engine/refresh.go
-          grep -Fq '2 * time.Minute' providers/kimi/engine/refresh.go
+          grep -Fq 'kimiRefreshLeadTime  = 2 * time.Minute' providers/kimi/engine/refresh.go
+          grep -Fq 'kimiTokenRefreshLoop' providers/kimi/engine/refresh.go
+          grep -Fq 'go kimiTokenRefreshLoop()' providers/kimi/engine/refresh.go
           grep -Fq 'refresh_token' providers/kimi/engine/refresh.go
 
       - name: Install exact upstream and apply reviewed integration
@@ -57,6 +59,7 @@ jobs:
           test "$(grep -Fc 'getAccessToken()' "$KIMI_VENDOR_DIR/main.go")" = 3
           grep -Fq 'writeTokenAtomic(accessTokenFile' "$KIMI_VENDOR_DIR/refresh.go"
           grep -Fq 'writeTokenAtomic(refreshTokenFile' "$KIMI_VENDOR_DIR/refresh.go"
+          grep -Fq 'kimiTokenRefreshLoop' "$KIMI_VENDOR_DIR/refresh.go"
 
       - name: Start script fails closed without session token
         working-directory: server

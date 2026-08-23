@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../../.."
+BASE_DIR="$(pwd -P)"
+RUNTIME_DIR="${ANTIGRAVITY_RUNTIME_DIR:-$BASE_DIR/runtime/antigravity}"
+API_KEY_FILE="${ANTIGRAVITY_API_KEY_FILE:-$RUNTIME_DIR/.api-key}"
+AGY_BIN="${AGY_BIN:-$(command -v agy || true)}"
+
+[ -n "$AGY_BIN" ] && [ -x "$AGY_BIN" ] || { echo "ERROR: agy CLI not installed; run providers/antigravity/engine/install.sh" >&2; exit 78; }
+mkdir -p "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR"
+if [ ! -s "$API_KEY_FILE" ]; then
+  umask 077
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$API_KEY_FILE"
+  printf '\n' >> "$API_KEY_FILE"
+fi
+chmod 600 "$API_KEY_FILE"
+export AGY_BIN
+export ANTIGRAVITY_API_KEY_FILE="$API_KEY_FILE"
+export ANTIGRAVITY_HOST="${ANTIGRAVITY_HOST:-127.0.0.1}"
+export ANTIGRAVITY_PORT="${ANTIGRAVITY_PORT:-3240}"
+exec node providers/antigravity/server.mjs

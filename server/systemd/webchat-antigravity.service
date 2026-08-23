@@ -14,7 +14,7 @@ Environment=ANTIGRAVITY_HOST=127.0.0.1
 Environment=ANTIGRAVITY_PORT=3240
 Environment=ANTIGRAVITY_RUNTIME_DIR=/home/agent/webchatproxy/runtime/antigravity
 EnvironmentFile=-/home/agent/webchatproxy/runtime/antigravity.env
-ExecStart=/home/agent/webchatproxy/providers/antigravity/engine/start.sh
+ExecStart=/bin/bash /home/agent/webchatproxy/providers/antigravity/engine/start.sh
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535

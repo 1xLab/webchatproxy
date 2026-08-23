@@ -1,8 +1,9 @@
 diff --git a/main.go b/main.go
-index 39acc1a..4b69f77 100644
+index 39acc1a..7de3488 100644
 --- a/main.go
 +++ b/main.go
-@@ -28,9 +28,11 @@ import (
+@@ -26,8 +26,10 @@ import (
+ 
  var (
      port        = envOrDefault("PORT", "3000")
 +    host        = envOrDefault("HOST", "127.0.0.1")
@@ -12,7 +13,8 @@ index 39acc1a..4b69f77 100644
 +    authKey     = "Bearer " + authKeyRaw
  
      agentMode bool
-@@ -1617,7 +1619,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+ 
+@@ -1620,7 +1622,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
      // ── Non-stream dispatch (Agent Mode) ──
      // The non-stream handler owns its own upstream request so it can
      // transparently retry on the standby session after a context-limit.
@@ -21,8 +23,7 @@ index 39acc1a..4b69f77 100644
          handleChatCompletionsNonStream(w, modelKey, prompt, model, thinking, search)
          return
      }
-@@ -1964,7 +1966,7 @@ func router(w http.ResponseWriter, r *http.Request) {
-     case path == "/history" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+@@ -1970,7 +1972,7 @@ func router(w http.ResponseWriter, r *http.Request) {
          handleHistory(w, r)
      case path == "/new" && r.Method == http.MethodPost:
          handleNewChat(w, r)
@@ -31,7 +32,7 @@ index 39acc1a..4b69f77 100644
          handleModels(w, r)
      case path == "/refresh-models" && r.Method == http.MethodPost:
          handleRefreshModels(w, r)
-@@ -1978,6 +1980,13 @@ func main() {
+@@ -1987,6 +1989,13 @@ func main() {
          "Enable agent mode: translate OpenAI tools & roles into a Kimi-compatible prompt and intercept <<<TOOL_CALL>>> blocks in the output")
      flag.Parse()
  
@@ -45,7 +46,7 @@ index 39acc1a..4b69f77 100644
      if agentMode {
          log.Println("Agent mode ENABLED: tool-call interception active")
      }
-@@ -2034,7 +2043,7 @@ func main() {
+@@ -2042,7 +2051,7 @@ func main() {
  
      // HTTP server tuned for streaming proxy workload
      server := &http.Server{
@@ -54,7 +55,7 @@ index 39acc1a..4b69f77 100644
          Handler:      withMiddleware(router),
          ReadTimeout:  30 * time.Second,
          WriteTimeout: 0, // no timeout — SSE streams can be long-lived
-@@ -2055,7 +2064,7 @@ func main() {
+@@ -2062,7 +2071,7 @@ func main() {
          }
      }()
  

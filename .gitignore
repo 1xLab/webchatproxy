@@ -13,3 +13,4 @@ cookies.txt
 **/.DS_Store
 .backup-*/
 internal-browser.log*
+.env

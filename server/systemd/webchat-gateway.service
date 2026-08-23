@@ -14,6 +14,7 @@ Environment=WEBCHAT_PROFILE_DIR=/home/agent/webchatproxy/browser-profile
 Environment=WEBCHAT_RUNTIME_DIR=/home/agent/webchatproxy/runtime
 Environment=WEBCHAT_HOST=127.0.0.1
 Environment=WEBCHAT_PORT=3210
+EnvironmentFile=-/home/agent/webchatproxy/runtime/gateway.env
 Environment=WEBCHAT_ENGINE_VENV=/home/agent/webchatproxy/.venv-chatgpt
 PIDFile=/home/agent/webchatproxy/.webchat-gateway.pid
 ExecStart=/home/agent/webchatproxy/start.sh start

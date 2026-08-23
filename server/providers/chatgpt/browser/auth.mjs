@@ -30,16 +30,16 @@ if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND
 
 if (!browserBin) {
   console.error("BROWSER_AUTH_CHROME_NOT_FOUND");
-  console.error("Google Chrome is required so browser-auth and BrowserBackend use the same browser family/profile.");
+  console.error("Google Chrome is required for the canonical ChatGPT browser profile.");
   console.error("Set WEBCHAT_AUTH_BROWSER_BIN to the absolute Google Chrome executable if it is installed in a non-standard path.");
   process.exit(5);
 }
 
 await mkdir(profileDir, { recursive: true });
 
-// Authentication intentionally runs in a normal, unmanaged Google Chrome
-// process. BrowserBackend also uses Playwright's `channel: chrome`, so both
-// paths share the same browser family and the canonical persistent profile.
+// Authentication runs in a normal unmanaged Google Chrome process using the
+// same persistent user-data directory consumed later by the ChatGPT-Web2API
+// Chrome/CDP runtime. This script never owns the normal gateway browser.
 const args = [
   `--user-data-dir=${profileDir}`,
   "--no-first-run",
@@ -56,7 +56,7 @@ console.log(`browser=${browserBin}`);
 console.log(`url=${targetUrl}`);
 console.log(`display=${process.env.DISPLAY || process.env.WAYLAND_DISPLAY || "none"}`);
 console.log("Use Log in -> Continue with Google and complete Google OAuth manually.");
-console.log("The browser will NOT be closed by this script. Close Chrome manually only after ChatGPT shows the authenticated account/profile.");
+console.log("Close Chrome manually only after ChatGPT shows the authenticated account/profile.");
 
 const child = spawn(browserBin, args, {
   stdio: "inherit",
@@ -82,4 +82,4 @@ if (exit.code !== 0) {
 }
 
 console.log("BROWSER_AUTH_BROWSER_CLOSED");
-console.log("The Google Chrome profile has been left on disk. Start the gateway and run doctor to verify authenticated=true.");
+console.log("The Google Chrome profile remains on disk. Start the gateway and run doctor to verify authenticated=true.");

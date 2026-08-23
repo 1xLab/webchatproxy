@@ -1,0 +1,24 @@
+[Unit]
+Description=WebChatProxy Google Antigravity Provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/webchatproxy
+Environment=HOME=/home/agent
+Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ANTIGRAVITY_HOST=127.0.0.1
+Environment=ANTIGRAVITY_PORT=3240
+Environment=ANTIGRAVITY_RUNTIME_DIR=/home/agent/webchatproxy/runtime/antigravity
+EnvironmentFile=-/home/agent/webchatproxy/runtime/antigravity.env
+ExecStart=/home/agent/webchatproxy/providers/antigravity/engine/start.sh
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

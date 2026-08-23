@@ -137,7 +137,16 @@ class BridgeClient:
                 f"/v1/conversations/{encoded}",
                 params={"offset": 0, "limit": 500},
             )
-            conversation = payload.get("conversation") if isinstance(payload, dict) else None
+
+            # Pinned upstream do_get_conversation() returns the normalized
+            # conversation object directly: {id,title,messages,...}. Older
+            # bridge variants wrapped it as {conversation:{...}}, so accept
+            # both shapes while preferring the current direct response.
+            conversation = payload
+            wrapped = payload.get("conversation") if isinstance(payload, dict) else None
+            if isinstance(wrapped, dict):
+                conversation = wrapped
+
             messages = conversation.get("messages", []) if isinstance(conversation, dict) else []
             if isinstance(messages, list):
                 user_index = -1
@@ -238,12 +247,10 @@ class BridgeClient:
         if name == ToolName.LIST_GPTS.value:
             return await self.request("GET", "/v1/gpts")
         if name == ToolName.CHAT_WITH_GPT.value:
-            user_message = str(args.get("message") or "")
             gpt_id = quote(str(args["gpt_id"]), safe="")
-            result = await self.request(
-                "POST", f"/v1/gpts/{gpt_id}/chat", json_body={"message": user_message}
+            return await self.request(
+                "POST", f"/v1/gpts/{gpt_id}/chat", json_body={"message": str(args.get("message") or "")}
             )
-            return await self.reconcile_chat_result(result, user_message)
 
         raise ValueError(f"Unknown MCP tool: {name}")
 

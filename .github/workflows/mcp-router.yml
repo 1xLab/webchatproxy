@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'server/mcp/**'
+      - 'server/providers/antigravity/**'
       - 'server/systemd/webchat-mcp-router.service'
       - '.github/workflows/mcp-router.yml'
   pull_request:
     paths:
       - 'server/mcp/**'
+      - 'server/providers/antigravity/**'
       - 'server/systemd/webchat-mcp-router.service'
       - '.github/workflows/mcp-router.yml'
 
@@ -31,20 +33,18 @@ jobs:
       - name: Validate router contract
         run: |
           python - <<'PY'
-          import asyncio
           from mcp.server import Server
-          from mcp.server.lowlevel.server import NotificationOptions
-          from mcp.server.models import InitializationOptions
-          import mcp.server as _mcp
           import importlib.util
 
           spec = importlib.util.spec_from_file_location('router', 'mcp/server.py')
           mod = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(mod)
-          assert list(mod.PROVIDERS) == ['chatgpt', 'deepseek', 'kimi']
+          assert list(mod.PROVIDERS) == ['chatgpt', 'deepseek', 'kimi', 'antigravity']
           assert mod.PROVIDERS['chatgpt']['base_url'].endswith(':3210')
           assert mod.PROVIDERS['deepseek']['base_url'].endswith(':3220')
           assert mod.PROVIDERS['kimi']['base_url'].endswith(':3230')
+          assert mod.PROVIDERS['antigravity']['base_url'].endswith(':3240')
+          assert str(mod.PROVIDERS['antigravity']['key_file']).endswith('runtime/antigravity/.api-key')
           server = mod.create_server(mod.ProviderClient())
           assert isinstance(server, Server)
           print('mcp_router_provider_contract=ok')

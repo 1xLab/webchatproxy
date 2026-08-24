@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { ProviderRegistry } from './core/provider-registry.mjs';
 import { JobManager } from './core/job-manager.mjs';
+import { UsageStore } from './core/usage-store.mjs';
 import { HttpProviderAdapter } from './core/http-provider-adapter.mjs';
 import { createHttpServer } from './http/server.mjs';
 
@@ -54,13 +55,14 @@ for (const spec of specs) {
   }));
 }
 
-const jobs = await new JobManager({ registry, runtimeDir }).init();
+const usage = await new UsageStore({ runtimeDir }).init();
+const jobs = await new JobManager({ registry, runtimeDir, usageStore: usage }).init();
 const publicToken = process.env.WEBCHAT_UNIVERSAL_API_TOKEN || '';
 const universalPort = Number(process.env.WEBCHAT_PORT || 3200);
 const servers = [];
 
 function listen(port, fixedProvider = null) {
-  const server = createHttpServer({ registry, jobs, token: publicToken, fixedProvider });
+  const server = createHttpServer({ registry, jobs, usage, token: publicToken, fixedProvider });
   server.listen(port, host, () => {
     const label = fixedProvider ? `${fixedProvider} facade` : 'universal gateway';
     console.log(`webchatproxy ${label} listening on http://${host}:${port}`);

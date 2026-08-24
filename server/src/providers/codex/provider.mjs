@@ -2,7 +2,11 @@ import { join } from 'node:path';
 import { CodexOAuth } from './oauth.mjs';
 
 const CODEX_ENDPOINT = process.env.CODEX_API_ENDPOINT || 'https://chatgpt.com/backend-api/codex/responses';
-const DEFAULT_MODELS = ['gpt-5.5', 'gpt-5.3-codex-spark', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.1-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2-codex'];
+const DEFAULT_MODELS = [
+  'gpt-5.5', 'gpt-5.3-codex-spark', 'gpt-5.4', 'gpt-5.4-mini',
+  'gpt-5.1-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini', 'gpt-5.2-codex',
+  'gpt-5.6-sol-wm', 'gpt-5.6-terra-wm', 'gpt-5.6-luna-wm', 'gpt-5.6-mini', 'gpt-5.6-t-mini',
+];
 
 function responseText(payload) {
   if (typeof payload?.output_text === 'string') return payload.output_text;
@@ -26,7 +30,15 @@ export class CodexProvider {
   async health() { return { ok: (await this.auth.status()).authenticated }; }
 
   async models() {
-    return { object: 'list', data: this.modelsList.map(id => ({ id, object: 'model', created: 0, owned_by: 'openai-codex' })) };
+    return {
+      object: 'list',
+      data: this.modelsList.map(id => ({
+        id, object: 'model', created: 0, owned_by: 'openai-codex',
+        context_window: id.includes('5.6') ? 1_050_000 : 400_000,
+        max_input_tokens: id.includes('5.6') ? 922_000 : 272_000,
+        max_output_tokens: 128_000,
+      })),
+    };
   }
 
   async chat(request, { signal } = {}) {

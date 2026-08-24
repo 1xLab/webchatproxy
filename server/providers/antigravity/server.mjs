@@ -60,7 +60,7 @@ function parseModels(text) {
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
-    const m = line.match(/^([a-z0-9][a-z0-9._-]*)\s{2,}(.+)$/i);
+    const m = line.match(/^([a-z0-9][a-z0-9._-]*)(?:\t+|\s{2,})(.+)$/i);
     if (!m) continue;
     data.push({ id: m[1], object: 'model', created: now, owned_by: 'google-antigravity', name: m[2].trim() });
   }

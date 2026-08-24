@@ -18,5 +18,9 @@ chmod 600 "$API_KEY_FILE"
 export AGY_BIN
 export ANTIGRAVITY_API_KEY_FILE="$API_KEY_FILE"
 export ANTIGRAVITY_HOST="${ANTIGRAVITY_HOST:-127.0.0.1}"
-export ANTIGRAVITY_PORT="${ANTIGRAVITY_PORT:-3240}"
+if [[ "${ANTIGRAVITY_INSTANCE:-}" =~ ^[1-9][0-9]*$ ]]; then
+  export ANTIGRAVITY_PORT="$((3250 + ANTIGRAVITY_INSTANCE))"
+else
+  export ANTIGRAVITY_PORT="${ANTIGRAVITY_PORT:-3240}"
+fi
 exec node providers/antigravity/server.mjs

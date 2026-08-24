@@ -21,9 +21,10 @@ function safeId(value) {
 }
 
 export class JobManager {
-  constructor({ registry, runtimeDir }) {
+  constructor({ registry, runtimeDir, usageStore = null }) {
     this.registry = registry;
     this.jobsDir = join(runtimeDir, 'jobs');
+    this.usageStore = usageStore;
     this.jobs = new Map();
     this.providerState = new Map();
     this.waiters = new Map();
@@ -41,6 +42,7 @@ export class JobManager {
           await this.#persist(job);
         }
         this.jobs.set(job.id, job);
+        if (TERMINAL.has(job.status)) await this.usageStore?.recordJob(job);
       } catch {}
     }
     return this;
@@ -92,7 +94,7 @@ export class JobManager {
     if (job.status === 'queued') state.queue = state.queue.filter((x) => x !== id);
     job.status = 'cancelled'; job.updated_at = now(); job.finished_at = job.updated_at;
     job.abortController?.abort(); delete job.abortController;
-    await this.#persist(job); this.#notify(job); return this.public(job);
+    await this.#persist(job); await this.usageStore?.recordJob(job); this.#notify(job); return this.public(job);
   }
 
   async waitFor(id, timeoutMs = 270000) {
@@ -124,7 +126,10 @@ export class JobManager {
     } catch (error) {
       if (job.status !== 'cancelled') { job.status='failed'; job.error=error.name === 'AbortError' ? 'job_timeout' : error.message; }
     } finally {
-      clearTimeout(timer); delete job.abortController; job.updated_at=now(); job.finished_at=job.updated_at; await this.#persist(job); this.#notify(job);
+      clearTimeout(timer); delete job.abortController; job.updated_at=now(); job.finished_at=job.updated_at;
+      await this.#persist(job);
+      if (TERMINAL.has(job.status)) await this.usageStore?.recordJob(job);
+      this.#notify(job);
     }
   }
 

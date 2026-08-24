@@ -14,7 +14,7 @@ function streamCompletion(res,job){
 }
 function usageFilters(url){return {provider:url.searchParams.get('provider')||null,model:url.searchParams.get('model')||null,conversationId:url.searchParams.get('conversation_id')||null,jobId:url.searchParams.get('job_id')||null,from:url.searchParams.get('from')||null,to:url.searchParams.get('to')||null,limit:url.searchParams.get('limit')||1000};}
 
-export function createHttpServer({registry,jobs,usage=null,token='',fixedProvider=null}){
+export function createHttpServer({registry,jobs,usage=null,token='',fixedProvider=null,codex=null}){
   const facadeProvider=fixedProvider?String(fixedProvider).trim().toLowerCase():null;
   if(facadeProvider)registry.get(facadeProvider);
   return http.createServer(async(req,res)=>{
@@ -22,6 +22,9 @@ export function createHttpServer({registry,jobs,usage=null,token='',fixedProvide
       const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);
       if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{service:'webchatproxy',ok:true,mode:facadeProvider?'provider-facade':'universal',provider:facadeProvider,providers:registry.ids(),jobs:jobs.stats()});
       if(!authorized(req,token))return send(res,401,openAiError('unauthorized','authentication_error','invalid_api_key'));
+      if(codex&&req.method==='GET'&&url.pathname==='/v1/auth/codex/start')return send(res,200,{object:'oauth.authorization',url:await codex.auth.startLogin()});
+      if(codex&&req.method==='GET'&&url.pathname==='/v1/auth/codex/status')return send(res,200,{object:'oauth.status',...await codex.auth.status()});
+      if(codex&&req.method==='POST'&&url.pathname==='/v1/auth/codex/logout'){codex.auth.close();return send(res,200,{ok:true});}
       if(req.method==='GET'&&url.pathname==='/v1/providers')return send(res,200,{object:'list',data:facadeProvider?[registry.get(facadeProvider).describe()]:registry.describe()});
       if(req.method==='GET'&&url.pathname==='/v1/models'){
         const provider=facadeProvider||url.searchParams.get('provider'); if(!provider)return send(res,400,openAiError('provider is required','invalid_request_error','provider_required'));

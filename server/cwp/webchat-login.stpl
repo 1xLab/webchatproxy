@@ -1,0 +1,37 @@
+server {
+    listen %ip%:%nginx_port%;
+    server_name %domain_idn% %alias_idn%;
+
+    access_log /usr/local/apache/domlogs/%domain%.bytes bytes;
+    access_log /usr/local/apache/domlogs/%domain%.log combined;
+    error_log /usr/local/apache/domlogs/%domain%.error.log error;
+
+    location / {
+        auth_basic "ChatGPT Browser Login";
+        auth_basic_user_file /etc/nginx/.webchatproxy-browser-login.htpasswd;
+
+        proxy_pass http://127.0.0.1:6080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
+        proxy_buffering off;
+    }
+
+    location /.well-known/acme-challenge {
+        default_type "text/plain";
+        alias /usr/local/apache/autossl_tmp/.well-known/acme-challenge;
+    }
+
+    location /.well-known/pki-validation {
+        default_type "text/plain";
+        alias /usr/local/apache/autossl_tmp/.well-known/acme-challenge;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}

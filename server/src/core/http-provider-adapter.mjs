@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+const MANAGER_FIELDS = new Set(['provider', 'request_id', 'async', 'timeout']);
+
 export class HttpProviderAdapter {
   constructor({ id, baseUrl, concurrency = 1, runtimeDir, staticToken = null }) {
     this.id = id;
@@ -46,7 +48,9 @@ export class HttpProviderAdapter {
   async models({ signal } = {}) { return this.#request('GET', '/v1/models', null, { signal }); }
 
   async chat(request, { signal } = {}) {
-    const payload = await this.#request('POST', '/v1/chat/completions', { ...request, stream: false }, { signal });
+    const upstream = Object.fromEntries(Object.entries(request).filter(([key]) => !MANAGER_FIELDS.has(key)));
+    upstream.stream = false;
+    const payload = await this.#request('POST', '/v1/chat/completions', upstream, { signal });
     const choice = Array.isArray(payload?.choices) ? payload.choices[0] : null;
     const content = choice?.message?.content ?? payload?.content ?? '';
     const conversationId = payload?.conversation_id

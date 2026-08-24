@@ -42,7 +42,10 @@ function sum(target, event) {
   target.cached_input_tokens += event.tokens.cached_input_tokens;
   target.reasoning_tokens += event.tokens.reasoning_tokens;
   target.duration_ms += event.duration_ms || 0;
-  if (event.cost?.estimated != null) target.estimated_cost += event.cost.estimated;
+  if (event.cost?.estimated != null) {
+    target.priced_requests += 1;
+    target.estimated_cost += event.cost.estimated;
+  }
   return target;
 }
 
@@ -59,6 +62,7 @@ function emptyTotals() {
     cached_input_tokens: 0,
     reasoning_tokens: 0,
     duration_ms: 0,
+    priced_requests: 0,
     estimated_cost: 0,
   };
 }

@@ -129,8 +129,9 @@ export class CodexOAuth {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ grant_type: 'authorization_code', authorization_code: authorization.authorization_code, redirect_uri: `${this.issuer}/deviceauth/callback`, client_id: this.clientId, code_verifier: authorization.code_verifier }),
       });
-      if (!tokens.ok) { device.status = 'failed'; device.error = `token exchange failed: ${tokens.status}`; return; }
-      await this.saveTokens(await tokens.json());
+      const tokenText = await tokens.text();
+      if (!tokens.ok) { device.status = 'failed'; device.error = `token exchange failed: ${tokens.status} ${tokenText.slice(0, 300)}`; return; }
+      await this.saveTokens(JSON.parse(tokenText));
       device.status = 'authenticated';
       this.device = null;
       return;

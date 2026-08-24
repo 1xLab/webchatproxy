@@ -23,11 +23,9 @@ else
   exit 1
 fi
 
-if [ ! -s "$AUTH_FILE" ]; then
-  "$HT" -c "$AUTH_FILE" login
-else
-  echo "Keeping existing $AUTH_FILE"
-fi
+TOKEN="$(sed -n 's/^WEBCHAT_UNIVERSAL_API_TOKEN=//p' "$ROOT/runtime/webchatproxy.env" 2>/dev/null || true)"
+[ -n "$TOKEN" ] || { echo "WEBCHAT_UNIVERSAL_API_TOKEN is missing" >&2; exit 1; }
+printf '%s\n' "$TOKEN" | "$HT" -i -B -c "$AUTH_FILE" login
 chown root:nobody "$AUTH_FILE"
 chmod 640 "$AUTH_FILE"
 

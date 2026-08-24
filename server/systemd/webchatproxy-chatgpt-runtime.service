@@ -19,7 +19,7 @@ Environment=WEBCHAT_HEADLESS=1
 Environment=WEBCHAT_RUNTIME_DIR=/home/agent/webchatproxy/runtime
 Environment=WEBCHAT_PROFILE_DIR=/home/agent/webchatproxy/browser-profile
 EnvironmentFile=-/home/agent/webchatproxy/runtime/chatgpt.env
-ExecStart=/usr/bin/node /home/agent/webchatproxy/server/provider-runtime-chatgpt.mjs
+ExecStart=/usr/bin/env node /home/agent/webchatproxy/server/provider-runtime-chatgpt.mjs
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535

@@ -18,7 +18,7 @@ Environment=DEEPSEEK_UPSTREAM_URL=http://127.0.0.1:3320
 Environment=KIMI_UPSTREAM_URL=http://127.0.0.1:3330
 Environment=ANTIGRAVITY_UPSTREAM_URL=http://127.0.0.1:3340
 EnvironmentFile=-/home/agent/webchatproxy/runtime/webchatproxy.env
-ExecStart=/usr/bin/node /home/agent/webchatproxy/server/src/index.mjs
+ExecStart=/usr/bin/env node /home/agent/webchatproxy/server/src/index.mjs
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535

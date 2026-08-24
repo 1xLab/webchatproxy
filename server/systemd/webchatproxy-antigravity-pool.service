@@ -16,7 +16,7 @@ Environment=ANTIGRAVITY_POOL_RUNTIME_DIR=/home/agent/webchatproxy/runtime
 Environment=ANTIGRAVITY_POOL_API_KEY_FILE=/home/agent/webchatproxy/runtime/antigravity-pool/.api-key
 Environment=ANTIGRAVITY_POOL_WORKERS=http://127.0.0.1:3251,http://127.0.0.1:3252,http://127.0.0.1:3253,http://127.0.0.1:3254,http://127.0.0.1:3255,http://127.0.0.1:3256,http://127.0.0.1:3257,http://127.0.0.1:3258,http://127.0.0.1:3259,http://127.0.0.1:3260
 EnvironmentFile=-/home/agent/webchatproxy/runtime/antigravity-pool.env
-ExecStart=/usr/bin/node /home/agent/webchatproxy/server/providers/antigravity/pool.mjs
+ExecStart=/usr/bin/env node /home/agent/webchatproxy/server/providers/antigravity/pool.mjs
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535

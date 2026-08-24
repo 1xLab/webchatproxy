@@ -1,0 +1,4 @@
+repo=https://github.com/kittors/deepseek-web-api.git
+commit=9b62d6a17ba502fa6aefa2dceb527d1e925aa6ce
+license=MIT
+package_manager=pnpm@10.13.1

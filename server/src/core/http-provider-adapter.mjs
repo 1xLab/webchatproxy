@@ -1,25 +1,27 @@
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
-const MANAGER_FIELDS = new Set(['provider', 'request_id', 'async', 'timeout']);
+import { isAbsolute, join } from 'node:path';
 
 export class HttpProviderAdapter {
-  constructor({ id, baseUrl, concurrency = 1, runtimeDir, staticToken = null }) {
+  constructor({ id, baseUrl, concurrency = 1, runtimeDir, staticToken = null, tokenFile = null, capabilities = null }) {
     this.id = id;
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.concurrency = Math.max(1, Number(concurrency) || 1);
     this.runtimeDir = runtimeDir;
     this.staticToken = staticToken;
-    this.capabilities = Object.freeze({ models: true, chat: true, streaming: true, conversations: true });
+    this.tokenFile = tokenFile;
+    this.capabilities = Object.freeze(capabilities || { models: true, chat: true, streaming: true, conversations: true });
   }
 
   describe() {
-    return { id: this.id, concurrency: this.concurrency, capabilities: this.capabilities };
+    return { id: this.id, concurrency: this.concurrency, capabilities: this.capabilities, upstream: this.baseUrl };
   }
 
   async #token() {
     if (this.staticToken) return this.staticToken;
-    try { return (await readFile(join(this.runtimeDir, this.id, '.api-key'), 'utf8')).split(/\r?\n/)[0].trim(); }
+    const file = this.tokenFile
+      ? (isAbsolute(this.tokenFile) ? this.tokenFile : join(this.runtimeDir, this.tokenFile))
+      : join(this.runtimeDir, this.id, '.api-key');
+    try { return (await readFile(file, 'utf8')).split(/\r?\n/)[0].trim(); }
     catch { return ''; }
   }
 
@@ -48,9 +50,8 @@ export class HttpProviderAdapter {
   async models({ signal } = {}) { return this.#request('GET', '/v1/models', null, { signal }); }
 
   async chat(request, { signal } = {}) {
-    const upstream = Object.fromEntries(Object.entries(request).filter(([key]) => !MANAGER_FIELDS.has(key)));
-    upstream.stream = false;
-    const payload = await this.#request('POST', '/v1/chat/completions', upstream, { signal });
+    const { provider: _provider, async: _async, request_id: _requestId, ...providerPayload } = request;
+    const payload = await this.#request('POST', '/v1/chat/completions', { ...providerPayload, stream: false }, { signal });
     const choice = Array.isArray(payload?.choices) ? payload.choices[0] : null;
     const content = choice?.message?.content ?? payload?.content ?? '';
     const conversationId = payload?.conversation_id

@@ -1,0 +1,66 @@
+diff --git a/main.go b/main.go
+index 39acc1a..7de3488 100644
+--- a/main.go
++++ b/main.go
+@@ -26,8 +26,10 @@ import (
+ 
+ var (
+     port        = envOrDefault("PORT", "3000")
++    host        = envOrDefault("HOST", "127.0.0.1")
+     accessToken = envOrDefault("KIMI_ACCESS_TOKEN", "")
+-    authKey     = "Bearer " + envOrDefault("AUTH_KEY", "Waguri")
++    authKeyRaw  = envOrDefault("AUTH_KEY", "")
++    authKey     = "Bearer " + authKeyRaw
+ 
+     agentMode bool
+ 
+@@ -1620,7 +1622,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+     // ── Non-stream dispatch (Agent Mode) ──
+     // The non-stream handler owns its own upstream request so it can
+     // transparently retry on the standby session after a context-limit.
+-    if agentMode && !body.Stream {
++    if !body.Stream {
+         handleChatCompletionsNonStream(w, modelKey, prompt, model, thinking, search)
+         return
+     }
+@@ -1970,7 +1972,7 @@ func router(w http.ResponseWriter, r *http.Request) {
+         handleHistory(w, r)
+     case path == "/new" && r.Method == http.MethodPost:
+         handleNewChat(w, r)
+-    case path == "/models" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
++    case (path == "/models" || path == "/v1/models") && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+         handleModels(w, r)
+     case path == "/refresh-models" && r.Method == http.MethodPost:
+         handleRefreshModels(w, r)
+@@ -1987,6 +1989,13 @@ func main() {
+         "Enable agent mode: translate OpenAI tools & roles into a Kimi-compatible prompt and intercept <<<TOOL_CALL>>> blocks in the output")
+     flag.Parse()
+ 
++    if accessToken == "" {
++        log.Fatal("KIMI_ACCESS_TOKEN is required")
++    }
++    if authKeyRaw == "" {
++        log.Fatal("AUTH_KEY is required")
++    }
++
+     if agentMode {
+         log.Println("Agent mode ENABLED: tool-call interception active")
+     }
+@@ -2042,7 +2051,7 @@ func main() {
+ 
+     // HTTP server tuned for streaming proxy workload
+     server := &http.Server{
+-        Addr:         ":" + port,
++        Addr:         host + ":" + port,
+         Handler:      withMiddleware(router),
+         ReadTimeout:  30 * time.Second,
+         WriteTimeout: 0, // no timeout — SSE streams can be long-lived
+@@ -2062,7 +2071,7 @@ func main() {
+         }
+     }()
+ 
+-    log.Printf("Kimi Proxy Server running on port %s", port)
++    log.Printf("Kimi Proxy Server running on %s:%s", host, port)
+     if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+         log.Fatalf("Server error: %v", err)
+     }

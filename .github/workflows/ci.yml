@@ -17,13 +17,23 @@ jobs:
           node-version: '22'
       - run: npm run check
       - run: npm test
-      - name: Validate fresh architecture
+      - name: Validate unified architecture
         run: |
           test "$(find ../.github/workflows -maxdepth 1 -type f | wc -l)" -eq 1
           test -f src/core/job-manager.mjs
           test -f src/core/provider-registry.mjs
           test -f src/core/http-provider-adapter.mjs
-          grep -Fq "['chatgpt'" src/index.mjs
-          grep -Fq "['deepseek'" src/index.mjs
-          grep -Fq "['kimi'" src/index.mjs
-          grep -Fq "['antigravity'" src/index.mjs
+          test -f provider-runtime-chatgpt.mjs
+          test -f providers/chatgpt/web2api-engine.mjs
+          test -f providers/deepseek/engine/UPSTREAM.lock
+          test -f providers/kimi/engine/refresh.go
+          test -f providers/antigravity/pool.mjs
+          test -f systemd/webchatproxy.service
+          test -f ../deploy.sh
+          grep -Fq "id: 'chatgpt'" src/index.mjs
+          grep -Fq "id: 'deepseek'" src/index.mjs
+          grep -Fq "id: 'kimi'" src/index.mjs
+          grep -Fq "id: 'antigravity'" src/index.mjs
+          grep -Fq "3310" src/index.mjs
+          grep -Fq "3340" src/index.mjs
+          grep -Fq "antigravity-pool/.api-key" src/index.mjs

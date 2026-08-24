@@ -1,0 +1,4 @@
+repo=https://github.com/izaart95-jpg/KimiFreeAPI.git
+commit=e7269e1fe1a53af7f4050ef88656d9502043514c
+license=MIT
+go_min=1.21

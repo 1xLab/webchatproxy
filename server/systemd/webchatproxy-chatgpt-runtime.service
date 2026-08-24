@@ -1,0 +1,28 @@
+[Unit]
+Description=WebChatProxy ChatGPT Internal Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/webchatproxy/server
+Environment=HOME=/home/agent
+Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CHATGPT_RUNTIME_HOST=127.0.0.1
+Environment=CHATGPT_RUNTIME_PORT=3310
+Environment=WEBCHAT_ENGINE_HOST=127.0.0.1
+Environment=WEBCHAT_ENGINE_PORT=3311
+Environment=WEBCHAT_ENGINE_CDP_PORT=9222
+Environment=WEBCHAT_RUNTIME_DIR=/home/agent/webchatproxy/runtime
+Environment=WEBCHAT_PROFILE_DIR=/home/agent/webchatproxy/browser-profile
+EnvironmentFile=-/home/agent/webchatproxy/runtime/chatgpt.env
+ExecStart=/usr/bin/node /home/agent/webchatproxy/server/provider-runtime-chatgpt.mjs
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

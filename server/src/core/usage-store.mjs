@@ -36,6 +36,7 @@ function sum(target, event) {
   target.failed += event.status === 'failed' ? 1 : 0;
   target.cancelled += event.status === 'cancelled' ? 1 : 0;
   target.interrupted += event.status === 'interrupted' ? 1 : 0;
+  target.metered_requests += event.measurement?.source === 'provider_reported' ? 1 : 0;
   target.input_tokens += event.tokens.input_tokens;
   target.output_tokens += event.tokens.output_tokens;
   target.total_tokens += event.tokens.total_tokens;
@@ -56,6 +57,7 @@ function emptyTotals() {
     failed: 0,
     cancelled: 0,
     interrupted: 0,
+    metered_requests: 0,
     input_tokens: 0,
     output_tokens: 0,
     total_tokens: 0,
@@ -97,7 +99,8 @@ export class UsageStore {
     return pricing?.[`${provider}:${model}`] ?? pricing?.[`${provider}:*`] ?? null;
   }
 
-  async #estimate(provider, model, tokens) {
+  async #estimate(provider, model, tokens, measurement) {
+    if (measurement.source !== 'provider_reported') return { estimated: null, currency: null, pricing_key: null };
     const price = await this.#pricing(provider, model);
     if (!price) return { estimated: null, currency: null, pricing_key: null };
     const inputRate = Number(price.input_per_million ?? 0);
@@ -119,7 +122,11 @@ export class UsageStore {
   async recordJob(job) {
     if (!job?.id || this.jobIds.has(job.id)) return null;
     const tokens = normalizeUsage(job.usage || {});
-    const cost = await this.#estimate(job.provider, job.model, tokens);
+    const measurement = {
+      source: tokens.total_tokens > 0 ? 'provider_reported' : 'unavailable',
+      exact: tokens.total_tokens > 0,
+    };
+    const cost = await this.#estimate(job.provider, job.model, tokens, measurement);
     const started = job.started_at ? new Date(job.started_at).getTime() : null;
     const finished = job.finished_at ? new Date(job.finished_at).getTime() : null;
     const event = {
@@ -129,6 +136,7 @@ export class UsageStore {
       model: job.model || null,
       conversation_id: job.conversation_id || null,
       status: job.status,
+      measurement,
       tokens,
       cost,
       duration_ms: started != null && finished != null ? Math.max(0, finished - started) : 0,

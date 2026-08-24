@@ -8,7 +8,7 @@ const port = Number(process.env.ANTIGRAVITY_POOL_PORT || 3240);
 const poolKeyFile = process.env.ANTIGRAVITY_POOL_API_KEY_FILE || `${process.cwd()}/runtime/antigravity-pool/.api-key`;
 const timeoutMs = Number(process.env.ANTIGRAVITY_POOL_TIMEOUT || 300000);
 const cooldownMs = Number(process.env.ANTIGRAVITY_POOL_COOLDOWN || 30000);
-const workers = (process.env.ANTIGRAVITY_POOL_WORKERS || Array.from({ length: 10 }, (_, i) => `http://127.0.0.1:${32501 + i}`).join(','))
+const workers = (process.env.ANTIGRAVITY_POOL_WORKERS || Array.from({ length: 10 }, (_, i) => `http://127.0.0.1:${3251 + i}`).join(','))
   .split(',').map((url, index) => ({ url: url.trim().replace(/\/$/, ''), index, failedUntil: 0 })).filter(worker => worker.url);
 let cursor = 0;
 

@@ -3,17 +3,27 @@ import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
+import { loadCooldowns, persistCooldowns } from './pool-state.mjs';
 
 const host = process.env.ANTIGRAVITY_POOL_HOST || '127.0.0.1';
 const port = Number(process.env.ANTIGRAVITY_POOL_PORT || 3240);
 const runtimeDir = process.env.ANTIGRAVITY_POOL_RUNTIME_DIR || join(process.cwd(), 'runtime');
 const poolKeyFile = process.env.ANTIGRAVITY_POOL_API_KEY_FILE || join(runtimeDir, 'antigravity-pool/.api-key');
+const cooldownFile = process.env.ANTIGRAVITY_POOL_COOLDOWN_FILE || join(runtimeDir, 'antigravity-pool/cooldowns.json');
 const timeoutMs = Number(process.env.ANTIGRAVITY_POOL_TIMEOUT || 300000);
 const cooldownMs = Number(process.env.ANTIGRAVITY_POOL_COOLDOWN || 30000);
 const quotaCooldownMs = Number(process.env.ANTIGRAVITY_POOL_QUOTA_COOLDOWN || 3600000);
 const workers = (process.env.ANTIGRAVITY_POOL_WORKERS || Array.from({ length: 10 }, (_, i) => `http://127.0.0.1:${3251 + i}`).join(','))
   .split(',').map((url, index) => ({ url: url.trim().replace(/\/$/, ''), index, failedUntil: 0 })).filter(worker => worker.url);
 let activeIndex = null;
+if (loadCooldowns(cooldownFile, workers)) {
+  try { persistCooldowns(cooldownFile, workers); } catch (err) { console.error(`Unable to prune Antigravity cooldowns: ${err.message}`); }
+}
+
+function saveCooldowns() {
+  try { persistCooldowns(cooldownFile, workers); }
+  catch (err) { console.error(`Unable to persist Antigravity cooldowns: ${err.message}`); }
+}
 
 function keyFrom(file) {
   try { return readFileSync(file, 'utf8').split(/\r?\n/)[0].trim(); } catch { return ''; }
@@ -65,10 +75,14 @@ async function call(worker, path, options = {}) {
     });
   } finally { clearTimeout(timer); }
 }
-function markFailed(worker) { worker.failedUntil = Date.now() + cooldownMs; }
+function markFailed(worker) {
+  worker.failedUntil = Date.now() + cooldownMs;
+  saveCooldowns();
+}
 function markQuotaExhausted(worker) {
   worker.failedUntil = Date.now() + quotaCooldownMs;
   if (activeIndex === worker.index) activeIndex = null;
+  saveCooldowns();
 }
 function accountLimit(status, text) {
   return status === 429 || status === 403 || status === 401

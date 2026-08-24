@@ -13,6 +13,10 @@ install -o root -g root -m 0644 "$TEMPLATE" \
   /usr/local/cwpsrv/htdocs/resources/conf/web_servers/vhosts/nginx/webchatlogin.stpl
 install -o root -g root -m 0644 "$TEMPLATE" \
   /usr/local/cwpsrv/htdocs/resources/conf/web_servers/vhosts/nginx/php-fpm/webchatlogin.stpl
+install -o root -g root -m 0644 "$TEMPLATE" \
+  /usr/local/cwpsrv/htdocs/resources/conf/web_servers/vhosts/nginx/webchatlogin.tpl
+install -o root -g root -m 0644 "$TEMPLATE" \
+  /usr/local/cwpsrv/htdocs/resources/conf/web_servers/vhosts/nginx/php-fpm/webchatlogin.tpl
 
 if command -v htpasswd >/dev/null 2>&1; then
   HT="$(command -v htpasswd)"

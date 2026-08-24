@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd -P)"
 TEMPLATE="$ROOT/server/cwp/webchatlogin.stpl"
+[ -f "$TEMPLATE" ] || TEMPLATE="$ROOT/webchatlogin.stpl"
 UNIT="$ROOT/server/systemd/webchatproxy-browser-login.service"
 AUTH_FILE=/etc/nginx/.webchatproxy-browser-login.htpasswd
 

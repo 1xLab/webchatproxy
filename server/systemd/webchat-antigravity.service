@@ -13,6 +13,7 @@ Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=ANTIGRAVITY_HOST=127.0.0.1
 Environment=ANTIGRAVITY_PORT=3240
 Environment=ANTIGRAVITY_RUNTIME_DIR=/home/agent/webchatproxy/runtime/antigravity
+Environment=ANTIGRAVITY_CONTEXT_DIR=/home/agent/webchatproxy/runtime/antigravity/context
 EnvironmentFile=-/home/agent/webchatproxy/runtime/antigravity.env
 ExecStart=/bin/bash /home/agent/webchatproxy/providers/antigravity/engine/start.sh
 Restart=on-failure

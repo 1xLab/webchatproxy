@@ -14,6 +14,7 @@ Environment=ANTIGRAVITY_HOST=127.0.0.1
 Environment=ANTIGRAVITY_INSTANCE=%i
 Environment=ANTIGRAVITY_RUNTIME_DIR=/home/agent/webchatproxy/runtime/antigravity-%i
 Environment=ANTIGRAVITY_API_KEY_FILE=/home/agent/webchatproxy/runtime/antigravity-%i/.api-key
+Environment=ANTIGRAVITY_CONTEXT_DIR=/home/agent/webchatproxy/runtime/antigravity-%i/context
 EnvironmentFile=-/home/agent/webchatproxy/runtime/antigravity-%i.env
 ExecStart=/bin/bash /home/agent/webchatproxy/providers/antigravity/engine/start.sh
 Restart=on-failure

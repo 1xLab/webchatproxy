@@ -2,14 +2,16 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 
 const host = process.env.ANTIGRAVITY_HOST || '127.0.0.1';
 const port = Number(process.env.ANTIGRAVITY_PORT || 3240);
 const agyBin = process.env.AGY_BIN || 'agy';
 const apiKeyFile = process.env.ANTIGRAVITY_API_KEY_FILE || `${process.cwd()}/runtime/antigravity/.api-key`;
+const contextDir = process.env.ANTIGRAVITY_CONTEXT_DIR || `${process.cwd()}/runtime/antigravity-context`;
 const printTimeout = process.env.AGY_PRINT_TIMEOUT || '5m';
 const maxBody = Number(process.env.ANTIGRAVITY_MAX_BODY || 2 * 1024 * 1024);
+mkdirSync(contextDir, { recursive: true, mode: 0o700 });
 
 function apiKey() {
   try { return readFileSync(apiKeyFile, 'utf8').split(/\r?\n/)[0].trim(); } catch { return ''; }
@@ -38,7 +40,7 @@ async function readJson(req) {
 }
 function runAgy(args, { timeoutMs = 300000 } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(agyBin, args, { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(agyBin, args, { cwd: contextDir, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error(`agy timeout after ${timeoutMs}ms`)); }, timeoutMs);
@@ -85,7 +87,7 @@ function usageFromAgy(u = {}) {
 }
 function completionId() { return `chatcmpl-agy-${randomUUID().replaceAll('-', '')}`; }
 function agyArgs(prompt, model, format) {
-  const args = ['-p', prompt, '--output-format', format, '--print-timeout', printTimeout];
+  const args = ['-p', prompt, '--output-format', format, '--print-timeout', printTimeout, '--disable-slash-commands'];
   if (model) args.push('--model', model);
   return args;
 }

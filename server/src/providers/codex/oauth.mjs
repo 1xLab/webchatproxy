@@ -122,20 +122,20 @@ export class CodexOAuth {
         method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'webchatproxy-codex' },
         body: JSON.stringify({ device_auth_id: device.deviceId, user_code: device.userCode }),
       });
-      if (response.status === 403 || response.status === 404) continue;
-      if (!response.ok) { device.status = 'failed'; this.device = null; return; }
+      if (response.status === 400 || response.status === 403 || response.status === 404) continue;
+      if (!response.ok) { device.status = 'failed'; device.error = `device poll failed: ${response.status}`; return; }
       const authorization = await response.json();
       const tokens = await fetch(`${this.issuer}/oauth/token`, {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ grant_type: 'authorization_code', authorization_code: authorization.authorization_code, redirect_uri: `${this.issuer}/deviceauth/callback`, client_id: this.clientId, code_verifier: authorization.code_verifier }),
       });
-      if (!tokens.ok) { device.status = 'failed'; this.device = null; return; }
+      if (!tokens.ok) { device.status = 'failed'; device.error = `token exchange failed: ${tokens.status}`; return; }
       await this.saveTokens(await tokens.json());
       device.status = 'authenticated';
       this.device = null;
       return;
     }
-    if (this.device === device) { device.status = 'expired'; this.device = null; }
+    if (this.device === device) { device.status = 'expired'; }
   }
 
   async #callback(req, res) {
@@ -160,7 +160,7 @@ export class CodexOAuth {
 
   async status() {
     const current = await this.load();
-    return { authenticated: Boolean(current?.refresh), expires: current?.expires || null, accountId: current?.accountId || null, device: this.device ? { status: this.device.status, user_code: this.device.userCode } : null };
+    return { authenticated: Boolean(current?.refresh), expires: current?.expires || null, accountId: current?.accountId || null, device: this.device ? { status: this.device.status, user_code: this.device.userCode, error: this.device.error || null } : null };
   }
 
   close() { this.server?.close(); this.server = null; this.pending = null; }

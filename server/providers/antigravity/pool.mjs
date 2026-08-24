@@ -8,9 +8,10 @@ const port = Number(process.env.ANTIGRAVITY_POOL_PORT || 3240);
 const poolKeyFile = process.env.ANTIGRAVITY_POOL_API_KEY_FILE || `${process.cwd()}/runtime/antigravity-pool/.api-key`;
 const timeoutMs = Number(process.env.ANTIGRAVITY_POOL_TIMEOUT || 300000);
 const cooldownMs = Number(process.env.ANTIGRAVITY_POOL_COOLDOWN || 30000);
+const quotaCooldownMs = Number(process.env.ANTIGRAVITY_POOL_QUOTA_COOLDOWN || 3600000);
 const workers = (process.env.ANTIGRAVITY_POOL_WORKERS || Array.from({ length: 10 }, (_, i) => `http://127.0.0.1:${3251 + i}`).join(','))
   .split(',').map((url, index) => ({ url: url.trim().replace(/\/$/, ''), index, failedUntil: 0 })).filter(worker => worker.url);
-let cursor = 0;
+let activeIndex = null;
 
 function keyFrom(file) {
   try { return readFileSync(file, 'utf8').split(/\r?\n/)[0].trim(); } catch { return ''; }
@@ -40,12 +41,14 @@ function available() {
   const now = Date.now();
   return workers.filter(worker => worker.failedUntil <= now && workerKey(worker));
 }
-function nextWorker() {
+function activeWorker() {
   const pool = available();
   if (!pool.length) return null;
-  const worker = pool[cursor % pool.length];
-  cursor = (cursor + 1) % Math.max(1, pool.length);
-  return worker;
+  const current = activeIndex == null ? null : workers.find(worker => worker.index === activeIndex);
+  if (current && pool.includes(current)) return current;
+  const next = pool.find(worker => activeIndex == null || worker.index > activeIndex) || pool[0];
+  activeIndex = next.index;
+  return next;
 }
 async function call(worker, path, options = {}) {
   const key = workerKey(worker);
@@ -61,6 +64,14 @@ async function call(worker, path, options = {}) {
   } finally { clearTimeout(timer); }
 }
 function markFailed(worker) { worker.failedUntil = Date.now() + cooldownMs; }
+function markQuotaExhausted(worker) {
+  worker.failedUntil = Date.now() + quotaCooldownMs;
+  if (activeIndex === worker.index) activeIndex = null;
+}
+function accountLimit(status, text) {
+  return status === 429 || status === 403 || status === 401
+    || /quota|rate.?limit|resource.?exhausted|too many requests|limit exceeded|capacity/i.test(text);
+}
 async function models() {
   const results = await Promise.allSettled(workers.map(worker => call(worker, '/v1/models')));
   const data = [];
@@ -75,15 +86,25 @@ async function models() {
   if (!data.length) throw new Error('no Antigravity account is available');
   return { object: 'list', data };
 }
-async function forward(worker, req, res) {
-  const body = await readJson(req);
+async function forward(worker, body, res) {
   const upstream = await call(worker, '/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+  if (!upstream.ok) {
+    const text = await upstream.text();
+    if (accountLimit(upstream.status, text)) {
+      markQuotaExhausted(worker);
+      return false;
+    }
+    res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json' });
+    res.end(text);
+    return true;
+  }
   res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': upstream.headers.get('cache-control') || 'no-cache' });
   if (upstream.body) Readable.fromWeb(upstream.body).pipe(res); else res.end();
+  return true;
 }
 const server = http.createServer(async (req, res) => {
   try {
@@ -94,9 +115,16 @@ const server = http.createServer(async (req, res) => {
     if (!authorized(req)) return error(res, 401, 'unauthorized', 'authentication_error');
     if (req.method === 'GET' && url.pathname === '/v1/models') return json(res, 200, await models());
     if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
-      const worker = nextWorker();
+      const body = await readJson(req);
+      const worker = activeWorker();
       if (!worker) return error(res, 503, 'no Antigravity account is available', 'accounts_unavailable');
-      try { return await forward(worker, req, res); } catch (err) { markFailed(worker); return error(res, 502, err.message); }
+      try {
+        if (await forward(worker, body, res)) return;
+        const next = activeWorker();
+        if (!next || next.index === worker.index) return error(res, 429, 'active Antigravity account quota exhausted', 'quota_exhausted');
+        if (await forward(next, body, res)) return;
+        return error(res, 429, 'all available Antigravity account quotas are exhausted', 'quota_exhausted');
+      } catch (err) { markFailed(worker); return error(res, 502, err.message); }
     }
     return error(res, 404, 'not found', 'not_found');
   } catch (err) { if (!res.headersSent) error(res, 502, err.message); else res.end(); }

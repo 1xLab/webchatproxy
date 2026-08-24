@@ -9,7 +9,7 @@ const port = Number(process.env.ANTIGRAVITY_PORT || 3240);
 const agyBin = process.env.AGY_BIN || 'agy';
 const apiKeyFile = process.env.ANTIGRAVITY_API_KEY_FILE || `${process.cwd()}/runtime/antigravity/.api-key`;
 const contextDir = process.env.ANTIGRAVITY_CONTEXT_DIR || `${process.cwd()}/runtime/antigravity-context`;
-const printTimeout = process.env.AGY_PRINT_TIMEOUT || '5m';
+const printTimeout = process.env.AGY_PRINT_TIMEOUT ?? '0';
 const maxBody = Number(process.env.ANTIGRAVITY_MAX_BODY || 2 * 1024 * 1024);
 mkdirSync(contextDir, { recursive: true, mode: 0o700 });
 

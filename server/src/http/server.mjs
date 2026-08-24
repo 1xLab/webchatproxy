@@ -54,7 +54,9 @@ export function createHttpServer({registry,jobs,usage=null,token='',fixedProvide
         const payload=facadeProvider?{...incoming,provider:facadeProvider}:incoming;
         const requestId=req.headers['idempotency-key']||payload.request_id||null; const created=await jobs.create(payload,{requestId});
         if(url.pathname==='/v1/jobs'||payload.async===true)return send(res,202,{job:created.job,reused:created.reused,status_url:`/v1/jobs/${encodeURIComponent(created.job.id)}`});
-        const finished=await jobs.waitFor(created.job.id,Math.max(1000,Number(payload.timeout)||240000)+30000);
+        const requestTimeout=Number(payload.timeout);
+        const waitTimeout=Number.isFinite(requestTimeout)&&requestTimeout>0?requestTimeout+30000:0;
+        const finished=await jobs.waitFor(created.job.id,waitTimeout);
         if(finished.status!=='completed')return send(res,finished.status==='cancelled'?409:502,{...openAiError(finished.error||finished.status,'provider_error'),gateway:finished});
         if(payload.stream===true)return streamCompletion(res,finished);
         return send(res,200,openAi(finished));

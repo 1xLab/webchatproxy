@@ -60,7 +60,7 @@ export class JobManager {
       model: payload.model || null,
       messages: payload.messages,
       conversation_id: payload.conversation_id || null,
-      timeout: Math.max(1000, Number(payload.timeout) || 240000),
+      timeout: Math.max(0, Number.isFinite(Number(payload.timeout)) ? Number(payload.timeout) : 0),
     };
     const request_hash = hashRequest(request);
     const existing = this.jobs.get(id);
@@ -98,12 +98,12 @@ export class JobManager {
     await this.#persist(job); await this.usageStore?.recordJob(job); this.#notify(job); return this.public(job);
   }
 
-  async waitFor(id, timeoutMs = 270000) {
+  async waitFor(id, timeoutMs = 0) {
     const job = this.jobs.get(id); if (!job) throw new Error('job_not_found'); if (TERMINAL.has(job.status)) return this.public(job);
     return new Promise((resolve,reject) => {
-      const timer = setTimeout(() => reject(new Error('timeout_waiting_for_job')), timeoutMs);
+      const timer = timeoutMs > 0 ? setTimeout(() => reject(new Error('timeout_waiting_for_job')), timeoutMs) : null;
       const list = this.waiters.get(id) || new Set();
-      list.add((j) => { clearTimeout(timer); resolve(this.public(j)); }); this.waiters.set(id,list);
+      list.add((j) => { if (timer) clearTimeout(timer); resolve(this.public(j)); }); this.waiters.set(id,list);
     });
   }
 
@@ -118,7 +118,7 @@ export class JobManager {
 
   async #run(job, adapter) {
     job.status='running'; job.started_at=now(); job.updated_at=job.started_at; job.abortController=new AbortController(); await this.#persist(job);
-    const timer=setTimeout(() => job.abortController.abort(), job.request.timeout);
+    const timer=job.request.timeout > 0 ? setTimeout(() => job.abortController.abort(), job.request.timeout) : null;
     try {
       const result=await adapter.chat(job.request,{signal:job.abortController.signal});
       if (job.status === 'cancelled') return;
@@ -130,7 +130,7 @@ export class JobManager {
     } catch (error) {
       if (job.status !== 'cancelled') { job.status='failed'; job.error=error.name === 'AbortError' ? 'job_timeout' : error.message; }
     } finally {
-      clearTimeout(timer); delete job.abortController; job.updated_at=now(); job.finished_at=job.updated_at;
+      if (timer) clearTimeout(timer); delete job.abortController; job.updated_at=now(); job.finished_at=job.updated_at;
       await this.#persist(job);
       if (TERMINAL.has(job.status)) await this.usageStore?.recordJob(job);
       this.#notify(job);

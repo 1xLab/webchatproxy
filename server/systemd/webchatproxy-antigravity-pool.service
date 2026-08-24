@@ -12,6 +12,7 @@ Environment=HOME=/home/agent
 Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=ANTIGRAVITY_POOL_HOST=127.0.0.1
 Environment=ANTIGRAVITY_POOL_PORT=3340
+Environment=ANTIGRAVITY_POOL_RUNTIME_DIR=/home/agent/webchatproxy/runtime
 Environment=ANTIGRAVITY_POOL_API_KEY_FILE=/home/agent/webchatproxy/runtime/antigravity-pool/.api-key
 Environment=ANTIGRAVITY_POOL_WORKERS=http://127.0.0.1:3251,http://127.0.0.1:3252,http://127.0.0.1:3253,http://127.0.0.1:3254,http://127.0.0.1:3255,http://127.0.0.1:3256,http://127.0.0.1:3257,http://127.0.0.1:3258,http://127.0.0.1:3259,http://127.0.0.1:3260
 EnvironmentFile=-/home/agent/webchatproxy/runtime/antigravity-pool.env

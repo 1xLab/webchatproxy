@@ -2,10 +2,12 @@
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
+import { join } from 'node:path';
 
 const host = process.env.ANTIGRAVITY_POOL_HOST || '127.0.0.1';
 const port = Number(process.env.ANTIGRAVITY_POOL_PORT || 3240);
-const poolKeyFile = process.env.ANTIGRAVITY_POOL_API_KEY_FILE || `${process.cwd()}/runtime/antigravity-pool/.api-key`;
+const runtimeDir = process.env.ANTIGRAVITY_POOL_RUNTIME_DIR || join(process.cwd(), 'runtime');
+const poolKeyFile = process.env.ANTIGRAVITY_POOL_API_KEY_FILE || join(runtimeDir, 'antigravity-pool/.api-key');
 const timeoutMs = Number(process.env.ANTIGRAVITY_POOL_TIMEOUT || 300000);
 const cooldownMs = Number(process.env.ANTIGRAVITY_POOL_COOLDOWN || 30000);
 const quotaCooldownMs = Number(process.env.ANTIGRAVITY_POOL_QUOTA_COOLDOWN || 3600000);
@@ -35,7 +37,7 @@ async function readJson(req) {
 }
 function workerKey(worker) {
   const suffix = String(worker.index + 1);
-  return keyFrom(process.env[`ANTIGRAVITY_WORKER_${suffix}_API_KEY_FILE`] || `${process.cwd()}/runtime/antigravity-${suffix}/.api-key`);
+  return keyFrom(process.env[`ANTIGRAVITY_WORKER_${suffix}_API_KEY_FILE`] || join(runtimeDir, `antigravity-${suffix}/.api-key`));
 }
 function available() {
   const now = Date.now();

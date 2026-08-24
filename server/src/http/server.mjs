@@ -23,6 +23,7 @@ export function createHttpServer({registry,jobs,usage=null,token='',fixedProvide
       if(req.method==='GET'&&url.pathname==='/health')return send(res,200,{service:'webchatproxy',ok:true,mode:facadeProvider?'provider-facade':'universal',provider:facadeProvider,providers:registry.ids(),jobs:jobs.stats()});
       if(!authorized(req,token))return send(res,401,openAiError('unauthorized','authentication_error','invalid_api_key'));
       if(codex&&req.method==='GET'&&url.pathname==='/v1/auth/codex/start')return send(res,200,{object:'oauth.authorization',url:await codex.auth.startLogin()});
+      if(codex&&req.method==='POST'&&url.pathname==='/v1/auth/codex/device/start')return send(res,200,{object:'oauth.device_authorization',...await codex.auth.startDeviceLogin()});
       if(codex&&req.method==='GET'&&url.pathname==='/v1/auth/codex/status')return send(res,200,{object:'oauth.status',...await codex.auth.status()});
       if(codex&&req.method==='POST'&&url.pathname==='/v1/auth/codex/logout'){codex.auth.close();return send(res,200,{ok:true});}
       if(req.method==='GET'&&url.pathname==='/v1/providers')return send(res,200,{object:'list',data:facadeProvider?[registry.get(facadeProvider).describe()]:registry.describe()});

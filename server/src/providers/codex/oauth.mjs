@@ -38,6 +38,7 @@ export class CodexOAuth {
     this.clientId = clientId;
     this.server = null;
     this.pending = null;
+    this.device = null;
   }
 
   async load() {
@@ -100,6 +101,43 @@ export class CodexOAuth {
     return url;
   }
 
+  async startDeviceLogin() {
+    if (this.device) return { url: `${this.issuer}/codex/device`, user_code: this.device.userCode, pending: true };
+    const response = await fetch(`${this.issuer}/api/accounts/deviceauth/usercode`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'webchatproxy-codex' },
+      body: JSON.stringify({ client_id: this.clientId }),
+    });
+    if (!response.ok) throw new Error(`Codex device authorization failed: ${response.status}`);
+    const data = await response.json();
+    this.device = { userCode: data.user_code, deviceId: data.device_auth_id, interval: Math.max(Number(data.interval) || 5, 1), status: 'pending' };
+    this.#pollDevice(this.device).catch(() => {});
+    return { url: `${this.issuer}/codex/device`, user_code: this.device.userCode, pending: true };
+  }
+
+  async #pollDevice(device) {
+    const deadline = Date.now() + 5 * 60_000;
+    while (this.device === device && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, device.interval * 1000));
+      const response = await fetch(`${this.issuer}/api/accounts/deviceauth/token`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'webchatproxy-codex' },
+        body: JSON.stringify({ device_auth_id: device.deviceId, user_code: device.userCode }),
+      });
+      if (response.status === 403 || response.status === 404) continue;
+      if (!response.ok) { device.status = 'failed'; this.device = null; return; }
+      const authorization = await response.json();
+      const tokens = await fetch(`${this.issuer}/oauth/token`, {
+        method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'authorization_code', authorization_code: authorization.authorization_code, redirect_uri: `${this.issuer}/deviceauth/callback`, client_id: this.clientId, code_verifier: authorization.code_verifier }),
+      });
+      if (!tokens.ok) { device.status = 'failed'; this.device = null; return; }
+      await this.saveTokens(await tokens.json());
+      device.status = 'authenticated';
+      this.device = null;
+      return;
+    }
+    if (this.device === device) { device.status = 'expired'; this.device = null; }
+  }
+
   async #callback(req, res) {
     const url = new URL(req.url || '/', `http://localhost:${this.port}`);
     if (url.pathname !== '/auth/callback') { res.writeHead(404); res.end('Not found'); return; }
@@ -122,7 +160,7 @@ export class CodexOAuth {
 
   async status() {
     const current = await this.load();
-    return { authenticated: Boolean(current?.refresh), expires: current?.expires || null, accountId: current?.accountId || null };
+    return { authenticated: Boolean(current?.refresh), expires: current?.expires || null, accountId: current?.accountId || null, device: this.device ? { status: this.device.status, user_code: this.device.userCode } : null };
   }
 
   close() { this.server?.close(); this.server = null; this.pending = null; }

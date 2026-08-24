@@ -127,7 +127,7 @@ export class CodexOAuth {
       const authorization = await response.json();
       const tokens = await fetch(`${this.issuer}/oauth/token`, {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ grant_type: 'authorization_code', authorization_code: authorization.authorization_code, redirect_uri: `${this.issuer}/deviceauth/callback`, client_id: this.clientId, code_verifier: authorization.code_verifier }),
+        body: new URLSearchParams({ grant_type: 'authorization_code', code: authorization.authorization_code, redirect_uri: `${this.issuer}/deviceauth/callback`, client_id: this.clientId, code_verifier: authorization.code_verifier }),
       });
       const tokenText = await tokens.text();
       if (!tokens.ok) { device.status = 'failed'; device.error = `token exchange failed: ${tokens.status} ${tokenText.slice(0, 300)}`; return; }

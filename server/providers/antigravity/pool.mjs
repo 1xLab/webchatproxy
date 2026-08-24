@@ -38,7 +38,7 @@ function workerKey(worker) {
 }
 function available() {
   const now = Date.now();
-  return workers.filter(worker => worker.failedUntil <= now);
+  return workers.filter(worker => worker.failedUntil <= now && workerKey(worker));
 }
 function nextWorker() {
   const pool = available();

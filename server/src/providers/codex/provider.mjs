@@ -45,7 +45,7 @@ export class CodexProvider {
   async chat(request, { signal } = {}) {
     const auth = await this.auth.accessToken();
     const input = Array.isArray(request.messages) ? request.messages.map(({ role, content }) => ({ role, content })) : request.input;
-    const body = { model: request.model || this.modelsList[0], input, stream: false };
+    const body = { model: request.model || this.modelsList[0], input, stream: false, store: false };
     let response = await this.#fetch(auth, body, signal);
     if (response.status === 401) response = await this.#fetch(await this.auth.refresh(), body, signal);
     const text = await response.text();

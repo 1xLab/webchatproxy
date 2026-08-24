@@ -1,39 +1,186 @@
 name: webchatproxy-v3-ci
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why this validation was started
+        required: false
+        default: manual validation
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webchatproxy-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  deterministic-suite:
+    name: Deterministic architecture and integration suite
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm run check
-      - run: npm test
+
+      - name: Versions
+        run: |
+          node --version
+          npm --version
+          python3 --version
+          git --version
+          echo "commit=$GITHUB_SHA"
+
+      - name: Syntax and static checks
+        run: npm run check
+
+      - name: Unit and integration tests
+        run: npm test
+
       - name: Validate unified architecture
         run: |
+          set -euo pipefail
           test "$(find ../.github/workflows -maxdepth 1 -type f | wc -l)" -eq 1
           test -f src/core/job-manager.mjs
           test -f src/core/provider-registry.mjs
           test -f src/core/http-provider-adapter.mjs
+          test -f src/http/server.mjs
           test -f provider-runtime-chatgpt.mjs
           test -f providers/chatgpt/web2api-engine.mjs
+          test -f providers/chatgpt/engine/web2api_bridge.py
           test -f providers/deepseek/engine/UPSTREAM.lock
+          test -f providers/deepseek/engine/patches/updates-content-append.patch
+          test -f providers/kimi/engine/UPSTREAM.lock
           test -f providers/kimi/engine/refresh.go
+          test -f providers/antigravity/server.mjs
           test -f providers/antigravity/pool.mjs
           test -f systemd/webchatproxy.service
+          test -f systemd/webchatproxy-chatgpt-runtime.service
+          test -f systemd/webchatproxy-deepseek-runtime.service
+          test -f systemd/webchatproxy-kimi-runtime.service
+          test -f systemd/webchatproxy-antigravity-pool.service
+          test -f systemd/webchatproxy-antigravity@.service
           test -f ../deploy.sh
+          test -f ../docs/LIVE-VALIDATION.md
+
+      - name: Validate public facade and internal runtime port contract
+        run: |
+          set -euo pipefail
           grep -Fq "id: 'chatgpt'" src/index.mjs
           grep -Fq "id: 'deepseek'" src/index.mjs
           grep -Fq "id: 'kimi'" src/index.mjs
           grep -Fq "id: 'antigravity'" src/index.mjs
           grep -Fq "3310" src/index.mjs
+          grep -Fq "3320" src/index.mjs
+          grep -Fq "3330" src/index.mjs
           grep -Fq "3340" src/index.mjs
+          grep -Fq "3210" src/index.mjs
+          grep -Fq "3220" src/index.mjs
+          grep -Fq "3230" src/index.mjs
+          grep -Fq "3240" src/index.mjs
           grep -Fq "antigravity-pool/.api-key" src/index.mjs
+          grep -Fq "WEBCHAT_RUNTIME_DIR=/home/agent/webchatproxy/runtime" systemd/webchatproxy.service
+
+      - name: Validate provider intelligence is still packaged
+        run: |
+          set -euo pipefail
+          grep -Fq "conversation" providers/chatgpt/web2api-engine.mjs
+          grep -Fq "commit=" providers/deepseek/engine/UPSTREAM.lock
+          grep -Fq "kimiTokenRefreshLoop" providers/kimi/engine/refresh.go
+          grep -Fq "quotaCooldownMs" providers/antigravity/pool.mjs
+          grep -Fq "Array.from({ length: 10 }" providers/antigravity/pool.mjs
+
+      - name: Validate systemd files syntactically where supported
+        run: |
+          set -euo pipefail
+          if command -v systemd-analyze >/dev/null 2>&1; then
+            for unit in systemd/*.service; do
+              systemd-analyze verify "$PWD/$unit" >/tmp/systemd-verify.log 2>&1 || {
+                cat /tmp/systemd-verify.log
+                exit 1
+              }
+            done
+          fi
+
+      - name: CI summary
+        if: always()
+        run: |
+          {
+            echo '## WebChatProxy deterministic validation'
+            echo
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo
+            echo '- Static syntax: executed by `npm run check`'
+            echo '- Unit/integration suite: executed by `npm test`'
+            echo '- Unified JobManager architecture: checked'
+            echo '- Public facade ports 3210-3240: checked statically'
+            echo '- Internal runtime ports 3310-3340: checked statically'
+            echo '- Provider-specific intelligence files: checked'
+            echo '- systemd units: checked'
+            echo
+            echo 'Live OAuth/browser/token/quota behavior requires the server-side handoff job below.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  operator-handoff:
+    name: Server operator handoff — live validation required
+    runs-on: ubuntu-latest
+    needs: deterministic-suite
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require deterministic suite before live approval
+        run: |
+          if [ "${{ needs.deterministic-suite.result }}" != "success" ]; then
+            echo "Deterministic CI failed. Do not deploy or approve live validation." >&2
+            exit 1
+          fi
+
+      - name: Publish exact server-side procedure
+        run: |
+          {
+            echo '## Server-side validation handoff'
+            echo
+            echo 'GitHub Actions has no access to the production host, browser profiles, OAuth sessions or provider credentials.'
+            echo 'A server operator must now execute the live validation contract from this same commit.'
+            echo
+            echo '### Mandatory procedure'
+            echo
+            echo '1. Confirm the deployed SHA equals this Actions SHA.'
+            echo '2. Run `npm run check` and `npm test` on the server checkout.'
+            echo '3. Run `sudo ./deploy.sh` only after the deterministic suite is green.'
+            echo '4. Verify systemd units and port ownership.'
+            echo '5. Test 3200 universal plus facades 3210, 3220, 3230, 3240.'
+            echo '6. Verify internal runtimes 3310, 3320, 3330, 3340.'
+            echo '7. Perform one real completion per authenticated provider.'
+            echo '8. Test idempotency, conversation isolation and gateway restart recovery.'
+            echo '9. Verify Kimi proactive refresh.'
+            echo '10. Verify Antigravity 10-account pool and quota failover.'
+            echo
+            echo 'Full executable instructions: `docs/LIVE-VALIDATION.md`.'
+            echo
+            echo '**Do not report production-ready until that live report is returned.**'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Print handoff to log
+        run: cat docs/LIVE-VALIDATION.md
+
+      - name: Upload live validation contract
+        uses: actions/upload-artifact@v4
+        with:
+          name: webchatproxy-live-validation-${{ github.sha }}
+          path: docs/LIVE-VALIDATION.md
+          if-no-files-found: error
+          retention-days: 14

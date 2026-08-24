@@ -4,7 +4,7 @@ import { chmod, mkdir, rename, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export const CODEX_ISSUER = process.env.CODEX_OAUTH_ISSUER || 'https://auth.openai.com';
-export const CODEX_CLIENT_ID = process.env.CODEX_OAUTH_CLIENT_ID || 'app_EMOamEEZ73f0CkXaXp7hrann';
+export const CODEX_CLIENT_ID = process.env.CODEX_OAUTH_CLIENT_ID || 'app_EMoamEEZ73f0CkXaXp7hrann';
 
 function base64url(value) {
   return Buffer.from(value).toString('base64url');

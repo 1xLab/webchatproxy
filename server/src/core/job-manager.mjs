@@ -52,6 +52,7 @@ export class JobManager {
     if (!Array.isArray(payload?.messages) || payload.messages.length === 0) throw new Error('messages must be a non-empty array');
     const id = safeId(requestId || payload.request_id) || `job_${crypto.randomUUID()}`;
     const request = {
+      ...payload,
       provider,
       model: payload.model || null,
       messages: payload.messages,

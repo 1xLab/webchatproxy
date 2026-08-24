@@ -19,7 +19,7 @@ trap cleanup EXIT INT TERM
 Xvfb "$DISPLAY" -screen 0 1920x1080x24 -ac -nolisten tcp &
 sleep 1
 x11vnc -display "$DISPLAY" -localhost -rfbport "$VNC_PORT" -forever -shared -nopw -noxdamage &
-"$NOVNC_DIR/utils/novnc_proxy" --listen "$WEB_PORT" --vnc "127.0.0.1:$VNC_PORT" --web "$NOVNC_DIR" &
+"$NOVNC_DIR/utils/novnc_proxy" --listen "127.0.0.1:$WEB_PORT" --vnc "127.0.0.1:$VNC_PORT" --web "$NOVNC_DIR" &
 google-chrome \
   --user-data-dir="$PROFILE" \
   --remote-debugging-port=9222 \

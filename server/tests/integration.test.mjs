@@ -177,6 +177,7 @@ test('idempotency key reuses the same job and rejects payload mutation', async (
       body: JSON.stringify({ model: 'agy-model', messages: [{ role: 'user', content: 'different' }], async: true }),
     });
     assert.equal(conflict.status, 409);
+    await fx.jobs.waitFor(firstPayload.job.id, 1000);
   } finally {
     await close(server);
     await rm(fx.runtimeDir, { recursive: true, force: true });

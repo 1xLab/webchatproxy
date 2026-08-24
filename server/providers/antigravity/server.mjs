@@ -38,19 +38,21 @@ async function readJson(req) {
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
 }
-function runAgy(args, { timeoutMs = 300000 } = {}) {
+function runAgy(args, { timeoutMs = Number(process.env.ANTIGRAVITY_TIMEOUT_MS ?? 0) } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(agyBin, args, { cwd: contextDir, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error(`agy timeout after ${timeoutMs}ms`)); }, timeoutMs);
+    const timer = timeoutMs > 0
+      ? setTimeout(() => { child.kill('SIGTERM'); reject(new Error(`agy timeout after ${timeoutMs}ms`)); }, timeoutMs)
+      : null;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', d => { stdout += d; });
     child.stderr.on('data', d => { stderr += d; });
-    child.on('error', err => { clearTimeout(timer); reject(err); });
+    child.on('error', err => { if (timer) clearTimeout(timer); reject(err); });
     child.on('close', code => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (code !== 0) return reject(new Error((stderr || stdout || `agy exited ${code}`).trim()));
       resolve({ stdout, stderr });
     });

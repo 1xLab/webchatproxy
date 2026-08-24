@@ -10,7 +10,7 @@ const port = Number(process.env.ANTIGRAVITY_POOL_PORT || 3240);
 const runtimeDir = process.env.ANTIGRAVITY_POOL_RUNTIME_DIR || join(process.cwd(), 'runtime');
 const poolKeyFile = process.env.ANTIGRAVITY_POOL_API_KEY_FILE || join(runtimeDir, 'antigravity-pool/.api-key');
 const cooldownFile = process.env.ANTIGRAVITY_POOL_COOLDOWN_FILE || join(runtimeDir, 'antigravity-pool/cooldowns.json');
-const timeoutMs = Number(process.env.ANTIGRAVITY_POOL_TIMEOUT || 300000);
+const timeoutMs = Number(process.env.ANTIGRAVITY_POOL_TIMEOUT ?? 0);
 const cooldownMs = Number(process.env.ANTIGRAVITY_POOL_COOLDOWN || 30000);
 const quotaCooldownMs = Number(process.env.ANTIGRAVITY_POOL_QUOTA_COOLDOWN || 3600000);
 const workers = (process.env.ANTIGRAVITY_POOL_WORKERS || Array.from({ length: 10 }, (_, i) => `http://127.0.0.1:${3251 + i}`).join(','))
@@ -66,14 +66,14 @@ async function call(worker, path, options = {}) {
   const key = workerKey(worker);
   if (!key) throw new Error(`worker ${worker.index + 1} API key is missing`);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
     return await fetch(`${worker.url}${path}`, {
       ...options,
       signal: controller.signal,
       headers: { ...(options.headers || {}), Authorization: `Bearer ${key}` },
     });
-  } finally { clearTimeout(timer); }
+  } finally { if (timer) clearTimeout(timer); }
 }
 function markFailed(worker) {
   worker.failedUntil = Date.now() + cooldownMs;

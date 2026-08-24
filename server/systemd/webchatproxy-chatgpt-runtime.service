@@ -15,6 +15,7 @@ Environment=CHATGPT_RUNTIME_PORT=3310
 Environment=WEBCHAT_ENGINE_HOST=127.0.0.1
 Environment=WEBCHAT_ENGINE_PORT=3311
 Environment=WEBCHAT_ENGINE_CDP_PORT=9222
+Environment=WEBCHAT_HEADLESS=1
 Environment=WEBCHAT_RUNTIME_DIR=/home/agent/webchatproxy/runtime
 Environment=WEBCHAT_PROFILE_DIR=/home/agent/webchatproxy/browser-profile
 EnvironmentFile=-/home/agent/webchatproxy/runtime/chatgpt.env

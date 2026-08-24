@@ -54,6 +54,7 @@ test('Codex provider maps Responses output and usage to OpenAI chat format', asy
 
 test('Codex catalog includes Kilo OAuth model aliases and context metadata', async () => {
   const provider = new CodexProvider({ runtimeDir: '/tmp/webchatproxy-codex-test' });
+  assert.equal(provider.concurrency, 1);
   const models = await provider.models();
   const sol = models.data.find(model => model.id === 'gpt-5.6-sol-wm');
   assert.ok(sol);

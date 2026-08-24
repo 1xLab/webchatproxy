@@ -19,6 +19,7 @@ function responseText(payload) {
 export class CodexProvider {
   constructor({ runtimeDir, authFile = 'codex/auth.json', endpoint = CODEX_ENDPOINT } = {}) {
     this.id = 'codex';
+    this.concurrency = 1;
     this.runtimeDir = runtimeDir;
     this.endpoint = endpoint;
     this.auth = new CodexOAuth({ file: join(runtimeDir, authFile) });

@@ -4,13 +4,13 @@ import http from 'node:http';
 function send(res,status,payload){const body=JSON.stringify(payload);res.writeHead(status,{'content-type':'application/json; charset=utf-8','content-length':Buffer.byteLength(body),'cache-control':'no-store'});res.end(body);}
 async function readJson(req){let body='';for await(const c of req){body+=c;if(body.length>2*1024*1024)throw new Error('request_body_too_large');}return body.trim()?JSON.parse(body):{};}
 function authorized(req,token){if(!token)return true;const supplied=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');const a=Buffer.from(supplied),b=Buffer.from(token);return a.length===b.length&&a.length>0&&crypto.timingSafeEqual(a,b);}
-function openAi(job){return {id:`chatcmpl-${job.id}`,object:'chat.completion',created:Math.floor(new Date(job.created_at).getTime()/1000),model:job.model||'unknown',choices:[{index:0,message:{role:'assistant',content:job.result?.content||''},finish_reason:job.result?.finish_reason||null}],usage:job.usage||{prompt_tokens:0,completion_tokens:0,total_tokens:0},gateway:{job_id:job.id,provider:job.provider,conversation_id:job.conversation_id,status:job.status}};}
+function openAi(job){return {id:`chatcmpl-${job.id}`,object:'chat.completion',created:Math.floor(new Date(job.created_at).getTime()/1000),model:job.model||'unknown',choices:[{index:0,message:{role:'assistant',content:job.result?.content||''},finish_reason:job.result?.finish_reason||null}],usage:job.usage||{prompt_tokens:0,completion_tokens:0,total_tokens:0},gateway:{job_id:job.id,provider:job.provider,conversation_id:job.conversation_id,status:job.status,usage_measurement:job.usage_measurement||null}};}
 function openAiError(message,type='gateway_error',code=null){return {error:{message,type,param:null,code}};}
 function streamCompletion(res,job){
   const response=openAi(job); const choice=response.choices[0];
   res.writeHead(200,{'content-type':'text/event-stream; charset=utf-8','cache-control':'no-cache','connection':'keep-alive','x-accel-buffering':'no'});
-  const emit=(delta,finish_reason=null)=>res.write(`data: ${JSON.stringify({id:response.id,object:'chat.completion.chunk',created:response.created,model:response.model,choices:[{index:0,delta,finish_reason}],gateway:response.gateway})}\n\n`);
-  emit({role:'assistant'}); if(choice.message.content)emit({content:choice.message.content}); emit({},choice.finish_reason||'stop'); res.write('data: [DONE]\n\n'); res.end();
+  const emit=(delta,finish_reason=null,usage=null)=>res.write(`data: ${JSON.stringify({id:response.id,object:'chat.completion.chunk',created:response.created,model:response.model,choices:[{index:0,delta,finish_reason}],...(usage?{usage}:{}),gateway:response.gateway})}\n\n`);
+  emit({role:'assistant'}); if(choice.message.content)emit({content:choice.message.content}); emit({},choice.finish_reason||'stop',response.usage); res.write('data: [DONE]\n\n'); res.end();
 }
 function usageFilters(url){return {provider:url.searchParams.get('provider')||null,model:url.searchParams.get('model')||null,conversationId:url.searchParams.get('conversation_id')||null,jobId:url.searchParams.get('job_id')||null,from:url.searchParams.get('from')||null,to:url.searchParams.get('to')||null,limit:url.searchParams.get('limit')||1000};}
 

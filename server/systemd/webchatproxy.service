@@ -1,7 +1,7 @@
 [Unit]
 Description=WebChatProxy Universal Gateway and Provider Facades
 After=network-online.target webchatproxy-chatgpt-runtime.service webchatproxy-deepseek-runtime.service webchatproxy-kimi-runtime.service webchatproxy-antigravity-pool.service
-Wants=network-online.target
+Wants=network-online.target webchatproxy-chatgpt-runtime.service webchatproxy-deepseek-runtime.service webchatproxy-kimi-runtime.service webchatproxy-antigravity-pool.service
 
 [Service]
 Type=simple
@@ -12,6 +12,7 @@ Environment=HOME=/home/agent
 Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=WEBCHAT_HOST=127.0.0.1
 Environment=WEBCHAT_PORT=3200
+Environment=WEBCHAT_RUNTIME_DIR=/home/agent/webchatproxy/runtime
 Environment=CHATGPT_UPSTREAM_URL=http://127.0.0.1:3310
 Environment=DEEPSEEK_UPSTREAM_URL=http://127.0.0.1:3320
 Environment=KIMI_UPSTREAM_URL=http://127.0.0.1:3330

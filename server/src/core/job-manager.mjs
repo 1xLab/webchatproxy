@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { meterUsage } from './token-meter.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -70,7 +71,7 @@ export class JobManager {
     const created = now();
     const job = {
       id, provider, model: request.model, request, request_hash, status: 'queued',
-      conversation_id: request.conversation_id, result: null, usage: null, error: null,
+      conversation_id: request.conversation_id, result: null, usage: null, usage_measurement: null, error: null,
       created_at: created, updated_at: created, started_at: null, finished_at: null,
     };
     this.jobs.set(id, job);
@@ -122,7 +123,10 @@ export class JobManager {
       const result=await adapter.chat(job.request,{signal:job.abortController.signal});
       if (job.status === 'cancelled') return;
       job.status='completed'; job.result={content:result.content,finish_reason:result.finish_reason};
-      job.conversation_id=result.conversation_id || job.conversation_id; job.model=result.model || job.model; job.usage=result.usage || null;
+      job.conversation_id=result.conversation_id || job.conversation_id; job.model=result.model || job.model;
+      const metered = meterUsage({ request: job.request, content: result.content, providerUsage: result.usage });
+      job.usage = metered.usage;
+      job.usage_measurement = metered.measurement;
     } catch (error) {
       if (job.status !== 'cancelled') { job.status='failed'; job.error=error.name === 'AbortError' ? 'job_timeout' : error.message; }
     } finally {
@@ -140,6 +144,6 @@ export class JobManager {
     await writeFile(temp,`${JSON.stringify(serial,null,2)}\n`,'utf8'); await rename(temp,target);
   }
   public(job) {
-    return { id:job.id, provider:job.provider, model:job.model, status:job.status, conversation_id:job.conversation_id, result:job.result, usage:job.usage, error:job.error, created_at:job.created_at, updated_at:job.updated_at, started_at:job.started_at, finished_at:job.finished_at };
+    return { id:job.id, provider:job.provider, model:job.model, status:job.status, conversation_id:job.conversation_id, result:job.result, usage:job.usage, usage_measurement:job.usage_measurement, error:job.error, created_at:job.created_at, updated_at:job.updated_at, started_at:job.started_at, finished_at:job.finished_at };
   }
 }

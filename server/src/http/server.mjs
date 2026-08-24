@@ -12,8 +12,9 @@ function streamCompletion(res,job){
   const emit=(delta,finish_reason=null)=>res.write(`data: ${JSON.stringify({id:response.id,object:'chat.completion.chunk',created:response.created,model:response.model,choices:[{index:0,delta,finish_reason}],gateway:response.gateway})}\n\n`);
   emit({role:'assistant'}); if(choice.message.content)emit({content:choice.message.content}); emit({},choice.finish_reason||'stop'); res.write('data: [DONE]\n\n'); res.end();
 }
+function usageFilters(url){return {provider:url.searchParams.get('provider')||null,model:url.searchParams.get('model')||null,conversationId:url.searchParams.get('conversation_id')||null,jobId:url.searchParams.get('job_id')||null,from:url.searchParams.get('from')||null,to:url.searchParams.get('to')||null,limit:url.searchParams.get('limit')||1000};}
 
-export function createHttpServer({registry,jobs,token='',fixedProvider=null}){
+export function createHttpServer({registry,jobs,usage=null,token='',fixedProvider=null}){
   const facadeProvider=fixedProvider?String(fixedProvider).trim().toLowerCase():null;
   if(facadeProvider)registry.get(facadeProvider);
   return http.createServer(async(req,res)=>{
@@ -26,6 +27,20 @@ export function createHttpServer({registry,jobs,token='',fixedProvider=null}){
         const provider=facadeProvider||url.searchParams.get('provider'); if(!provider)return send(res,400,openAiError('provider is required','invalid_request_error','provider_required'));
         return send(res,200,await registry.get(provider).models());
       }
+      if(req.method==='GET'&&url.pathname==='/v1/usage/summary'){
+        if(!usage)return send(res,503,openAiError('usage store unavailable','gateway_error','usage_unavailable'));
+        const filters=usageFilters(url); if(facadeProvider)filters.provider=facadeProvider;
+        return send(res,200,{object:'usage.summary',...usage.summary(filters)});
+      }
+      if(req.method==='GET'&&url.pathname==='/v1/usage/events'){
+        if(!usage)return send(res,503,openAiError('usage store unavailable','gateway_error','usage_unavailable'));
+        const filters=usageFilters(url); if(facadeProvider)filters.provider=facadeProvider;
+        return send(res,200,{object:'list',data:usage.query(filters)});
+      }
+      const usageJob=url.pathname.match(/^\/v1\/usage\/jobs\/([^/]+)$/);
+      if(req.method==='GET'&&usageJob){if(!usage)return send(res,503,openAiError('usage store unavailable','gateway_error','usage_unavailable'));const id=decodeURIComponent(usageJob[1]);const data=usage.query({jobId:id,limit:1});return data.length?send(res,200,{object:'usage.job',data:data[0]}):send(res,404,openAiError('usage job not found','invalid_request_error','usage_not_found'));}
+      const usageConversation=url.pathname.match(/^\/v1\/usage\/conversations\/([^/]+)$/);
+      if(req.method==='GET'&&usageConversation){if(!usage)return send(res,503,openAiError('usage store unavailable','gateway_error','usage_unavailable'));const id=decodeURIComponent(usageConversation[1]);const filters={...usageFilters(url),conversationId:id};if(facadeProvider)filters.provider=facadeProvider;return send(res,200,{object:'usage.conversation',conversation_id:id,...usage.summary(filters)});}
       if(req.method==='GET'&&url.pathname==='/v1/jobs')return send(res,200,{jobs:jobs.list({limit:url.searchParams.get('limit')||100}),stats:jobs.stats()});
       const match=url.pathname.match(/^\/v1\/jobs\/([^/]+)$/);
       if(match){const id=decodeURIComponent(match[1]);if(req.method==='GET'){const job=jobs.get(id);return job?send(res,200,{job}):send(res,404,{error:'job_not_found'});}if(req.method==='DELETE'){const job=await jobs.cancel(id);return job?send(res,200,{job}):send(res,404,{error:'job_not_found'});}}

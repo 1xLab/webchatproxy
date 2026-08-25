@@ -14,6 +14,7 @@ Usage:
   sudo ops/root-login.sh --deepseek
   sudo ops/root-login.sh --kimi
   sudo ops/root-login.sh --codex
+  sudo ops/root-login.sh --gateway-token
   sudo ops/root-login.sh --all
 
 Examples:
@@ -74,6 +75,19 @@ login_codex() {
   bash "$SERVER/browser-login/codex-oauth.sh"
 }
 
+login_gateway() {
+  local token
+  printf 'Universal gateway token: ' >&2
+  IFS= read -r -s token
+  printf '\n' >&2
+  [ -n "$token" ] || { echo "ERROR: empty gateway token" >&2; return 64; }
+  umask 077
+  printf 'WEBCHAT_UNIVERSAL_API_TOKEN=%s\n' "$token" > "$ROOT/runtime/webchatproxy.env"
+  chown "$USER_NAME:$USER_NAME" "$ROOT/runtime/webchatproxy.env"
+  chmod 600 "$ROOT/runtime/webchatproxy.env"
+  echo "Universal gateway token saved."
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --agy)
@@ -85,6 +99,7 @@ while [ "$#" -gt 0 ]; do
     --deepseek) login_deepseek; shift ;;
     --kimi) login_kimi; shift ;;
     --codex) login_codex; shift ;;
+    --gateway-token) login_gateway; shift ;;
     --all)
       for account in $(seq 1 10); do login_agy "$account"; done
       login_chatgpt

@@ -75,18 +75,18 @@ const publicToken = process.env.WEBCHAT_UNIVERSAL_API_TOKEN || '';
 const universalPort = Number(process.env.WEBCHAT_PORT || 3200);
 const servers = [];
 
-function listen(port, fixedProvider = null) {
-  const server = createHttpServer({ registry, jobs, usage, token: publicToken, fixedProvider, codex });
-  server.listen(port, host, () => {
-    const label = fixedProvider ? `${fixedProvider} facade` : 'universal gateway';
-    console.log(`webchatproxy ${label} listening on http://${host}:${port}`);
-  });
-  servers.push(server);
+const universal = createHttpServer({ registry, jobs, usage, token: publicToken, codex });
+universal.listen(universalPort, host, () => console.log(`webchatproxy universal gateway listening on http://${host}:${universalPort}`));
+servers.push(universal);
+for (const spec of specs) {
+  const facade = createForwardingServer({ upstream: `http://${host}:${universalPort}`, provider: spec.id, token: publicToken });
+  facade.listen(spec.facadePort, host, () => console.log(`webchatproxy ${spec.id} forwarding facade listening on http://${host}:${spec.facadePort}`));
+  servers.push(facade);
 }
-
-listen(universalPort);
-for (const spec of specs) listen(spec.facadePort, spec.id);
-listen(Number(process.env.CODEX_PORT || 3250), 'codex');
+const codexPort = Number(process.env.CODEX_PORT || 3250);
+const codexFacade = createForwardingServer({ upstream: `http://${host}:${universalPort}`, provider: 'codex', token: publicToken });
+codexFacade.listen(codexPort, host, () => console.log(`webchatproxy codex forwarding facade listening on http://${host}:${codexPort}`));
+servers.push(codexFacade);
 
 let stopping = false;
 async function shutdown(signal) {

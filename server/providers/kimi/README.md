@@ -1,14 +1,16 @@
 # Kimi provider
 
-Pinned web-session provider based on `izaart95-jpg/KimiFreeAPI`.
+Pinned Kimi Web-session provider based on `izaart95-jpg/KimiFreeAPI` plus reviewed native project/conversation extensions.
 
 ## Runtime
 
-- HTTP: `127.0.0.1:3230`
-- Auth token: `runtime/kimi/access_token`
-- Local API key: `runtime/kimi/.api-key`
+- Internal provider runtime: `127.0.0.1:3330`
+- Public provider facade: `127.0.0.1:3230`
+- Auth tokens: `runtime/kimi/access_token` and `runtime/kimi/refresh_token`
+- Local upstream API key: `runtime/kimi/.api-key`
 - Vendor checkout/build: `.vendor/kimi-free-api`
 - No browser or CDP is required during normal runtime.
+- No paid Moonshot API key is used.
 
 ## Install
 
@@ -16,46 +18,42 @@ Pinned web-session provider based on `izaart95-jpg/KimiFreeAPI`.
 providers/kimi/engine/install.sh
 ```
 
-The installer fetches the exact commit from `UPSTREAM.lock`, applies reviewed source patches, runs `gofmt`, `go vet`, and builds the binary.
+The installer fetches the exact commit from `UPSTREAM.lock`, applies reviewed source patches, copies the token refresher and native Kimi Web project client, runs `gofmt`, `go vet`, and builds the binary.
 
-## Import login token
+## Authentication
 
-From a logged-in `https://www.kimi.com` browser session, copy the `access_token` value from localStorage, then run:
+The runtime uses the authenticated Kimi Web account session. `access_token` and `refresh_token` are persisted under `runtime/kimi/`; the Go runtime proactively refreshes the access token and is the only component that owns that credential lifecycle.
 
-```bash
-providers/kimi/engine/import-token.sh
-```
+The WebChatProxy facade authenticates to the local Kimi runtime with `runtime/kimi/.api-key`. This is a local bridge credential, not a Moonshot API key.
 
-The token is written with mode `0600` under `runtime/kimi/` and is never committed.
-
-## Start
-
-```bash
-providers/kimi/engine/start.sh
-```
-
-The start script fails closed if the pinned engine is absent, the token is absent, or the local API key is absent/empty. The API binds to loopback by default.
-
-## API
+## OpenAI-compatible API
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
-Both require `Authorization: Bearer <runtime/kimi/.api-key>`.
+## Project and conversation facade
 
-## Facade and native capabilities
+The Kimi facade now exposes the native Kimi Web resources through normalized routes:
 
-The WebChatProxy facade currently exposes models and chat only. The authenticated
-Kimi Web runtime natively exposes projects, project chats and message history
-through Connect/JSON RPC under `/apiv2`.
+```text
+GET  /v1/projects
+GET  /v1/projects/{project_id}
+GET  /v1/projects/{project_id}/files
+GET  /v1/projects/{project_id}/conversations
+POST /v1/projects/{project_id}/conversations
+GET  /v1/conversations
+GET  /v1/conversations/{conversation_id}
+GET  /v1/conversations/{conversation_id}/messages
+POST /v1/conversations/{conversation_id}/resume
+```
 
-The upstream does expose session controls outside the OpenAI facade:
+On the universal gateway, add `provider=kimi` to read routes. The routing-only `provider` query parameter is removed before forwarding to the Kimi runtime.
 
-- `GET /history` reports/toggles the stateful session mode.
-- `POST /history` enables or disables stateful session mode.
-- `POST /new` starts a fresh session.
+Write routes preserve the caller JSON and only inject the route identity (`projectId` or `chatId`) before calling the Kimi Web RPC. This avoids inventing undocumented protocol fields.
 
-The Kimi Web project service is:
+## Native Kimi Web contracts
+
+Project service:
 
 ```text
 POST /apiv2/kimi.gateway.project.v1.ProjectService/ListProjects
@@ -67,7 +65,7 @@ POST /apiv2/kimi.gateway.project.v1.ProjectService/ListProjectFiles
 POST /apiv2/kimi.gateway.project.v1.ProjectService/SetChatProject
 ```
 
-Project conversations and history use:
+Chat service:
 
 ```text
 POST /apiv2/kimi.gateway.chat.v1.ChatService/ListChats
@@ -75,15 +73,23 @@ POST /apiv2/kimi.gateway.chat.v1.ChatService/GetChat
 POST /apiv2/kimi.gateway.chat.v1.ChatService/ListMessages
 POST /apiv2/kimi.gateway.chat.v1.ChatService/ResumeChat
 POST /apiv2/kimi.gateway.chat.v1.ChatService/Chat
+POST /apiv2/kimi.gateway.chat.v1.ChatService/CreateChat
+POST /apiv2/kimi.gateway.chat.v1.ChatService/UpdateChat
+POST /apiv2/kimi.gateway.chat.v1.ChatService/DeleteChat
 ```
 
-`ListChats` accepts `project_id`; `GetChat` returns `projectId`; and
-`ListMessages` returns the persisted message tree. These endpoints use the
-existing Kimi Web `access_token`/`refresh_token`, not a Moonshot API key.
+Live read-only validation confirmed `ListProjects`, `GetProject`, `ListChats` filtered by project, `GetChat`, `ListMessages`, and `ListProjectFiles` against the existing Kimi Web account using `access_token`/`refresh_token` only.
 
-Live validation of `/v1/projects` and `/v1/conversations` returning `404`
-describes the facade only, not the native Kimi Web capability.
+## Existing session controls
 
-## Upstream audit notes
+The pinned upstream also exposes:
 
-The upstream uses global conversation state guarded by a mutex. Treat one Kimi provider process as one serialized account/session domain; do not assume independent per-client conversation state. The webchatproxy provider is isolated from ChatGPT and DeepSeek at process/runtime level.
+- `GET /history`
+- `POST /history`
+- `POST /new`
+
+These remain provider-native controls and are independent from the normalized project facade.
+
+## Isolation
+
+The upstream uses global conversation state guarded by a mutex. Treat one Kimi provider process as one serialized account/session domain. The Kimi runtime and token files remain isolated from ChatGPT, DeepSeek, Antigravity and Codex.

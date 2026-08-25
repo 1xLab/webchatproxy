@@ -35,16 +35,31 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
       - name: Versions
         run: |
           node --version
           npm --version
+          go version
           python3 --version
           git --version
           echo "commit=$GITHUB_SHA"
 
       - name: Syntax and static checks
         run: npm run check
+
+      - name: Build pinned Kimi Web runtime
+        run: |
+          set -euo pipefail
+          bash providers/kimi/engine/install.sh
+          test -x .vendor/kimi-free-api/kimi-proxy
+          grep -Fq 'handleKimiNativeRoute' .vendor/kimi-free-api/main.go
+          grep -Fq 'ListProjects' providers/kimi/engine/native.go
+          grep -Fq 'ListMessages' providers/kimi/engine/native.go
 
       - name: Unit and integration tests
         run: npm test
@@ -64,6 +79,7 @@ jobs:
           test -f providers/deepseek/engine/patches/updates-content-append.patch
           test -f providers/kimi/engine/UPSTREAM.lock
           test -f providers/kimi/engine/refresh.go
+          test -f providers/kimi/engine/native.go
           test -f providers/antigravity/server.mjs
           test -f providers/antigravity/pool.mjs
           test -f systemd/webchatproxy.service
@@ -99,6 +115,7 @@ jobs:
           grep -Fq "conversation" providers/chatgpt/web2api-engine.mjs
           grep -Fq "commit=" providers/deepseek/engine/UPSTREAM.lock
           grep -Fq "kimiTokenRefreshLoop" providers/kimi/engine/refresh.go
+          grep -Fq "kimiNativeRPC" providers/kimi/engine/native.go
           grep -Fq "quotaCooldownMs" providers/antigravity/pool.mjs
           grep -Fq "Array.from({ length: 10 }" providers/antigravity/pool.mjs
 
@@ -123,6 +140,7 @@ jobs:
             echo "Commit: \`$GITHUB_SHA\`"
             echo
             echo '- Static syntax: executed by `npm run check`'
+            echo '- Pinned Kimi Web Go runtime: fetched, patched, vetted and compiled'
             echo '- Unit/integration suite: executed by `npm test`'
             echo '- Unified JobManager architecture: checked'
             echo '- Public facade ports 3210-3240: checked statically'
@@ -167,7 +185,8 @@ jobs:
             echo '7. Perform one real completion per authenticated provider.'
             echo '8. Test idempotency, conversation isolation and gateway restart recovery.'
             echo '9. Verify Kimi proactive refresh.'
-            echo '10. Verify Antigravity 10-account pool and quota failover.'
+            echo '10. Verify Kimi `GET :3230/v1/projects`, project conversations, project files and message history against the authenticated Web account.'
+            echo '11. Verify Antigravity 10-account pool and quota failover.'
             echo
             echo 'Full executable instructions: `docs/LIVE-VALIDATION.md`.'
             echo

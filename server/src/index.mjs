@@ -37,7 +37,7 @@ const specs = [
     concurrency: Number(process.env.KIMI_CONCURRENCY || 2),
     token: process.env.KIMI_UPSTREAM_TOKEN || null,
     tokenFile: process.env.KIMI_UPSTREAM_TOKEN_FILE || 'kimi/.api-key',
-    capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false },
+    capabilities: { models: true, chat: true, streaming: true, conversations: true, projects: true, project_conversations: true, project_files: true },
     nativeCapabilities: { models: true, chat: true, conversations: true, conversation_sessions: true, session_controls: true, projects: true, project_conversations: true, project_files: true, project_chat_assignment: true },
     facadePort: Number(process.env.KIMI_PORT || 3230),
   },

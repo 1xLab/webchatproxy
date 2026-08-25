@@ -49,6 +49,7 @@ export class HttpProviderAdapter {
 
   async health({ signal } = {}) { return this.#request('GET', '/health', null, { signal }); }
   async models({ signal } = {}) { return this.#request('GET', '/v1/models', null, { signal }); }
+  async native(method, path, body = null, { signal } = {}) { return this.#request(method, path, body, { signal }); }
 
   async chat(request, { signal } = {}) {
     const { provider: _provider, async: _async, request_id: _requestId, ...providerPayload } = request;

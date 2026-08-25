@@ -37,6 +37,10 @@ const server=http.createServer(async(req,res)=>{try{
  }
  return send(res,404,{error:{message:'not found',type:'invalid_request_error',code:'not_found'}});
 }catch(error){return send(res,error.status||502,errPayload(error));}});
-server.listen(port,host,()=>console.log(`ChatGPT internal runtime listening on http://${host}:${port}`));
+ async function start(){
+  await engine.start();
+  server.listen(port,host,()=>console.log(`ChatGPT internal runtime listening on http://${host}:${port}`));
+ }
+ start().catch((error)=>{console.error(`ChatGPT engine startup failed: ${error.message}`);process.exitCode=1;});
 let stopping=false;async function stop(){if(stopping)return;stopping=true;await new Promise(r=>server.close(r));await engine.close();}
 process.on('SIGTERM',()=>stop().finally(()=>process.exit(0)));process.on('SIGINT',()=>stop().finally(()=>process.exit(0)));

@@ -311,7 +311,7 @@ class EngineBridge:
                 "write_enabled": os.environ.get(WRITE_ENV) == "1",
                 "destructive_enabled": os.environ.get(DESTRUCTIVE_ENV) == "1",
                 "streaming": True,
-                "response_reconciliation": "conversation_tree",
+                "response_reconciliation": "upstream_driver",
             },
         })
 

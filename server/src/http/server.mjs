@@ -13,6 +13,8 @@ function streamCompletion(res,job){
   emit({role:'assistant'}); if(choice.message.content)emit({content:choice.message.content}); emit({},choice.finish_reason||'stop',response.usage); res.write('data: [DONE]\n\n'); res.end();
 }
 function usageFilters(url){return {provider:url.searchParams.get('provider')||null,model:url.searchParams.get('model')||null,conversationId:url.searchParams.get('conversation_id')||null,jobId:url.searchParams.get('job_id')||null,from:url.searchParams.get('from')||null,to:url.searchParams.get('to')||null,limit:url.searchParams.get('limit')||1000};}
+function extensionPath(url){const params=new URLSearchParams(url.searchParams);params.delete('provider');const query=params.toString();return `${url.pathname}${query?`?${query}`:''}`;}
+function extensionKind(path){if(path==='/v1/projects'||/^\/v1\/projects\/[^/]+(?:\/(?:files|conversations))?$/.test(path))return 'projects';if(path==='/v1/conversations'||/^\/v1\/conversations\/[^/]+(?:\/(?:messages|resume))?$/.test(path))return 'conversations';return null;}
 
 export function createHttpServer({registry,jobs,usage=null,token='',fixedProvider=null,codex=null}){
   const facadeProvider=fixedProvider?String(fixedProvider).trim().toLowerCase():null;
@@ -30,6 +32,17 @@ export function createHttpServer({registry,jobs,usage=null,token='',fixedProvide
       if(req.method==='GET'&&url.pathname==='/v1/models'){
         const provider=facadeProvider||url.searchParams.get('provider'); if(!provider)return send(res,400,openAiError('provider is required','invalid_request_error','provider_required'));
         return send(res,200,await registry.get(provider).models());
+      }
+      const extKind=extensionKind(url.pathname);
+      if(extKind&&['GET','POST'].includes(req.method)){
+        const provider=facadeProvider||url.searchParams.get('provider');
+        if(!provider)return send(res,400,openAiError('provider is required','invalid_request_error','provider_required'));
+        const adapter=registry.get(provider);
+        const caps=adapter.capabilities||{};
+        const allowed=extKind==='projects'?(caps.projects||caps.project_conversations||caps.project_files):caps.conversations;
+        if(!allowed||typeof adapter.native!=='function')return send(res,501,openAiError(`${provider} does not expose ${extKind} through the facade`,'unsupported_error','capability_not_exposed'));
+        const body=req.method==='POST'?await readJson(req):null;
+        return send(res,200,await adapter.native(req.method,extensionPath(url),body));
       }
       if(req.method==='GET'&&url.pathname==='/v1/usage/summary'){
         if(!usage)return send(res,503,openAiError('usage store unavailable','gateway_error','usage_unavailable'));
@@ -62,6 +75,6 @@ export function createHttpServer({registry,jobs,usage=null,token='',fixedProvide
         return send(res,200,openAi(finished));
       }
       return send(res,404,openAiError('not found','invalid_request_error','not_found'));
-    }catch(error){const status=error.code==='REQUEST_ID_CONFLICT'?409:/unknown provider|messages must|request_id|JSON|provider is required/.test(error.message)?400:500;return send(res,status,openAiError(error.message,'gateway_error',error.code||null));}
+    }catch(error){const status=Number(error.status)|| (error.code==='REQUEST_ID_CONFLICT'?409:/unknown provider|messages must|request_id|JSON|provider is required/.test(error.message)?400:500);return send(res,status,openAiError(error.message,'gateway_error',error.code||null));}
   });
 }

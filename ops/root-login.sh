@@ -54,12 +54,32 @@ login_chatgpt() {
 }
 
 login_deepseek() {
+  ensure_deepseek_browser
   systemctl stop webchatproxy-deepseek-runtime.service || true
   if ! run_agent "cd '$SERVER' && bash providers/deepseek/engine/login.sh"; then
     systemctl start webchatproxy-deepseek-runtime.service || true
     return 1
   fi
   systemctl start webchatproxy-deepseek-runtime.service
+}
+
+ensure_deepseek_browser() {
+  local display="${WEBCHAT_DISPLAY:-:100}"
+  local cdp="http://127.0.0.1:9333"
+  if ! curl --max-time 2 -fsS "$cdp/json/version" >/dev/null 2>&1; then
+    systemctl start webchatproxy-browser-login.service || true
+    for _ in $(seq 1 20); do
+      curl --max-time 2 -fsS "http://127.0.0.1:6080/vnc.html" >/dev/null 2>&1 && break
+      sleep 1
+    done
+    run_agent "DISPLAY='$display' nohup google-chrome --user-data-dir='$ROOT/browser-profile-deepseek' --remote-debugging-port=9333 --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check about:blank >/home/agent/webchatproxy/runtime/deepseek/chrome.log 2>&1 </dev/null &"
+    for _ in $(seq 1 30); do
+      curl --max-time 2 -fsS "$cdp/json/version" >/dev/null 2>&1 && return 0
+      sleep 1
+    done
+    echo "ERROR: DeepSeek Chrome CDP did not start on 9333; open the shared noVNC portal on 6080." >&2
+    return 1
+  fi
 }
 
 login_kimi() {

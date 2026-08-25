@@ -51,6 +51,17 @@ ensure_go() {
 ensure_go
 
 mkdir -p "$RUNTIME" "$ROOT/browser-profile" "$ROOT/browser-profile-deepseek"
+
+# Migrate the legacy gateway token file without sourcing untrusted shell text.
+if [ ! -s "$RUNTIME/webchatproxy.env" ] && [ -s "$RUNTIME/gateway.env" ]; then
+  legacy_token="$(awk -F= '$1=="WEBCHAT_API_TOKEN" {sub(/^[^=]*=/, ""); print; exit}' "$RUNTIME/gateway.env")"
+  if [ -n "$legacy_token" ]; then
+    printf 'WEBCHAT_UNIVERSAL_API_TOKEN=%s\n' "$legacy_token" > "$RUNTIME/webchatproxy.env"
+    chmod 600 "$RUNTIME/webchatproxy.env"
+    echo "Migrated legacy gateway token to runtime/webchatproxy.env."
+  fi
+fi
+
 chown -R "$USER_NAME:$USER_NAME" "$RUNTIME" "$ROOT/browser-profile" "$ROOT/browser-profile-deepseek"
 chmod 700 "$RUNTIME"
 

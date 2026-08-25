@@ -3,7 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../../.."
 BASE_DIR="$(pwd -P)"
-RUNTIME_DIR="${KIMI_RUNTIME_DIR:-$BASE_DIR/runtime/kimi}"
+DEPLOY_ROOT="$(cd "$BASE_DIR/.." && pwd -P)"
+RUNTIME_DIR="${KIMI_RUNTIME_DIR:-$DEPLOY_ROOT/runtime/kimi}"
 TOKEN_FILE="${KIMI_TOKEN_FILE:-$RUNTIME_DIR/access_token}"
 
 mkdir -p "$RUNTIME_DIR"

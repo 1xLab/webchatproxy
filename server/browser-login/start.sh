@@ -27,6 +27,8 @@ else
     --user-data-dir="$PROFILE" \
     --remote-debugging-port=9222 \
     --remote-debugging-address=127.0.0.1 \
+    --window-size=1920,1080 \
+    --start-maximized \
     --no-first-run \
     --no-default-browser-check \
     https://chatgpt.com &

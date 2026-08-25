@@ -90,7 +90,7 @@ ensure_deepseek_browser() {
       curl --max-time 2 -fsS "http://127.0.0.1:6080/vnc.html" >/dev/null 2>&1 && break
       sleep 1
     done
-    run_agent "DISPLAY='$display' nohup google-chrome --user-data-dir='$profile' --remote-debugging-port='${DEEPSEEK_CDP##*:}' --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check about:blank >/home/agent/webchatproxy/runtime/deepseek/chrome.log 2>&1 </dev/null &"
+    run_agent "DISPLAY='$display' nohup google-chrome --user-data-dir='$profile' --remote-debugging-port='${DEEPSEEK_CDP##*:}' --remote-debugging-address=127.0.0.1 --window-size=1920,1080 --start-maximized --no-first-run --no-default-browser-check about:blank >/home/agent/webchatproxy/runtime/deepseek/chrome.log 2>&1 </dev/null &"
     for _ in $(seq 1 30); do
       curl --max-time 2 -fsS "$DEEPSEEK_CDP/json/version" >/dev/null 2>&1 && return 0
       sleep 1

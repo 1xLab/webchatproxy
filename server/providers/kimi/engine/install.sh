@@ -29,7 +29,7 @@ fi
 git -C "$VENDOR_DIR" fetch --depth=1 origin "$pin"
 git -C "$VENDOR_DIR" checkout --detach --force FETCH_HEAD
 git -C "$VENDOR_DIR" clean -fdx
-test "$(git -C "$VENDOR_DIR" rev-parse HEAD)" = "$pin" || { echo "ERROR: Kimi upstream pin mismatch" >&2; exit 78; }
+test "$(git -C "$VENDOR_DIR" rev-parse HEAD)" = "$pin" || { echo "ERROR: Kimi vendor checkout is not at pinned commit $pin" >&2; exit 78; }
 
 PATCHES_DIR="$BASE_DIR/providers/kimi/engine/patches"
 if [ -d "$PATCHES_DIR" ]; then
@@ -42,24 +42,35 @@ if [ -d "$PATCHES_DIR" ]; then
 fi
 
 cp "$BASE_DIR/providers/kimi/engine/refresh.go" "$VENDOR_DIR/refresh.go"
+cp "$BASE_DIR/providers/kimi/engine/native.go" "$VENDOR_DIR/native.go"
 python3 - "$VENDOR_DIR/main.go" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
 source = path.read_text()
-needle = '"Bearer "+accessToken'
-count = source.count(needle)
-if count != 3:
-    raise SystemExit(f"ERROR: expected exactly 3 Kimi access-token call sites, found {count}")
-path.write_text(source.replace(needle, '"Bearer "+getAccessToken()'))
+
+token_needle = '"Bearer "+accessToken'
+token_count = source.count(token_needle)
+if token_count != 3:
+    raise SystemExit(f"ERROR: expected exactly 3 Kimi access-token call sites, found {token_count}")
+source = source.replace(token_needle, '"Bearer "+getAccessToken()')
+
+router_needle = '''    case path == "/refresh-models" && r.Method == http.MethodPost:\n        handleRefreshModels(w, r)\n    default:\n'''
+router_replacement = '''    case path == "/refresh-models" && r.Method == http.MethodPost:\n        handleRefreshModels(w, r)\n    case handleKimiNativeRoute(w, r):\n        return\n    default:\n'''
+router_count = source.count(router_needle)
+if router_count != 1:
+    raise SystemExit(f"ERROR: expected exactly one Kimi router insertion point, found {router_count}")
+source = source.replace(router_needle, router_replacement)
+
+path.write_text(source)
 PY
 
 (
   cd "$VENDOR_DIR"
-  gofmt -w main.go refresh.go
-  go vet main.go refresh.go
-  go build -trimpath -ldflags '-s -w' -o kimi-proxy main.go refresh.go
+  gofmt -w main.go refresh.go native.go
+  go vet main.go refresh.go native.go
+  go build -trimpath -ldflags '-s -w' -o kimi-proxy main.go refresh.go native.go
 )
 
 test -x "$VENDOR_DIR/kimi-proxy"

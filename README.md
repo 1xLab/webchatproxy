@@ -30,6 +30,24 @@ These ports are loopback-only implementation details:
 
 The public facades never call each other. They resolve through the `ProviderRegistry` to the corresponding internal runtime, so there is no port recursion.
 
+## History import API
+
+WebAgent imports provider history only through the provider-neutral contract:
+
+```text
+GET /v1/history/providers
+GET /v1/history/:provider/capabilities
+GET /v1/history/:provider/projects
+GET /v1/history/:provider/conversations
+GET /v1/history/:provider/conversations/:id
+GET /v1/history/:provider/conversations/:id/messages
+```
+
+The universal gateway resolves these routes to the provider's native runtime
+using the same provider credentials and session state as inference. Unsupported
+capabilities return `501` with `capability_not_exposed`; the gateway does not
+invent project or history data.
+
 ## Provider intelligence retained
 
 - **ChatGPT:** pinned Web2API bridge, browser/CDP ownership, conversations, projects/model discovery and persistent browser profile. The provider-specific JobManager is not used for execution; the v3 universal JobManager owns jobs.

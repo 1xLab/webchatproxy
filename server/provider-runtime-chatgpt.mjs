@@ -26,6 +26,7 @@ const server=http.createServer(async(req,res)=>{try{
   if(projectConversations&&req.method==='GET')return send(res,200,await engine.listConversations({projectId:decodeURIComponent(projectConversations[1]),all:url.searchParams.get('all')==='1',offset:Number(url.searchParams.get('offset')||0),limit:Number(url.searchParams.get('limit')||50)}));
   if(req.method==='GET'&&url.pathname==='/v1/conversations'){const result=await engine.listConversations({projectId:url.searchParams.get('project_id')||null,all:url.searchParams.get('all')==='1',offset:Number(url.searchParams.get('offset')||0),limit:Number(url.searchParams.get('limit')||50)});return send(res,200,result);}
   const cm=url.pathname.match(/^\/v1\/conversations\/([^/]+)$/);if(cm&&req.method==='GET')return send(res,200,await engine.getConversation(decodeURIComponent(cm[1])));
+  const messages=url.pathname.match(/^\/v1\/conversations\/([^/]+)\/messages$/);if(messages&&req.method==='GET')return send(res,200,await engine.getConversation(decodeURIComponent(messages[1]),{offset:Number(url.searchParams.get('offset')||0),limit:Number(url.searchParams.get('limit')||500)}));
   const archive=url.pathname.match(/^\/v1\/conversations\/([^/]+)\/archive$/);if(archive&&req.method==='POST')return send(res,200,await engine.archiveConversation(decodeURIComponent(archive[1]),(await readJson(req)).archive!==false));
   if(cm&&req.method==='DELETE')return send(res,200,await engine.deleteConversation(decodeURIComponent(cm[1])));
  if(req.method==='POST'&&url.pathname==='/v1/chat/completions'){

@@ -123,3 +123,26 @@ test('providers without exposed project capability return 501 instead of proxyin
     await rm(fx.runtimeDir, { recursive: true, force: true });
   }
 });
+
+test('history contract discovers providers and forwards provider-neutral resources', async () => {
+  const adapter = new NativeAdapter('kimi', { projects: true, conversations: true, project_conversations: true, project_files: true });
+  const fx = await fixture(adapter);
+  const server = createHttpServer({ registry: fx.registry, jobs: fx.jobs });
+  const base = await listen(server);
+  try {
+    const providers = await fetch(`${base}/v1/history/providers`);
+    assert.equal(providers.status, 200);
+    assert.equal((await providers.json())[0].id, 'kimi');
+
+    const capabilities = await fetch(`${base}/v1/history/kimi/capabilities`);
+    assert.equal(capabilities.status, 200);
+    assert.equal((await capabilities.json()).capabilities.projects, true);
+
+    const messages = await fetch(`${base}/v1/history/kimi/conversations/chat-1/messages?limit=25`);
+    assert.equal(messages.status, 200);
+    assert.deepEqual(adapter.calls.at(-1), { method: 'GET', path: '/v1/conversations/chat-1/messages?limit=25', body: null });
+  } finally {
+    await close(server);
+    await rm(fx.runtimeDir, { recursive: true, force: true });
+  }
+});

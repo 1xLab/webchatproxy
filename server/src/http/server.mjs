@@ -15,6 +15,18 @@ function streamCompletion(res,job){
 function usageFilters(url){return {provider:url.searchParams.get('provider')||null,model:url.searchParams.get('model')||null,conversationId:url.searchParams.get('conversation_id')||null,jobId:url.searchParams.get('job_id')||null,from:url.searchParams.get('from')||null,to:url.searchParams.get('to')||null,limit:url.searchParams.get('limit')||1000};}
 function extensionPath(url){const params=new URLSearchParams(url.searchParams);params.delete('provider');const query=params.toString();return `${url.pathname}${query?`?${query}`:''}`;}
 function extensionKind(path){if(path==='/v1/projects'||/^\/v1\/projects\/[^/]+(?:\/(?:files|conversations))?$/.test(path))return 'projects';if(path==='/v1/conversations'||/^\/v1\/conversations\/[^/]+(?:\/(?:messages|resume))?$/.test(path))return 'conversations';return null;}
+function historyRoute(url){
+  const match=url.pathname.match(/^\/v1\/history\/([^/]+)(?:\/(projects|conversations)(?:\/([^/]+)(?:\/(messages))?)?)?$/);
+  if(!match)return null;
+  const provider=decodeURIComponent(match[1]).trim().toLowerCase();
+  if(!match[2])return {provider,path:'/v1/projects'};
+  const resource=match[2]; const id=match[3] ? decodeURIComponent(match[3]) : null; const child=match[4];
+  if(resource==='projects')return id
+    ? {provider,path:`/v1/projects/${encodeURIComponent(id)}`}
+    : {provider,path:'/v1/projects'};
+  if(child)return {provider,path:`/v1/conversations/${encodeURIComponent(id)}/messages`};
+  return id ? {provider,path:`/v1/conversations/${encodeURIComponent(id)}`} : {provider,path:'/v1/conversations'};
+}
 
 export function createHttpServer({registry,jobs,usage=null,token='',fixedProvider=null,codex=null}){
   const facadeProvider=fixedProvider?String(fixedProvider).trim().toLowerCase():null;
@@ -29,6 +41,23 @@ export function createHttpServer({registry,jobs,usage=null,token='',fixedProvide
       if(codex&&req.method==='GET'&&url.pathname==='/v1/auth/codex/status')return send(res,200,{object:'oauth.status',...await codex.auth.status()});
       if(codex&&req.method==='POST'&&url.pathname==='/v1/auth/codex/logout'){codex.auth.close();return send(res,200,{ok:true});}
       if(req.method==='GET'&&url.pathname==='/v1/providers')return send(res,200,{object:'list',data:facadeProvider?[registry.get(facadeProvider).describe()]:registry.describe()});
+      if(req.method==='GET'&&url.pathname==='/v1/history/providers')return send(res,200,facadeProvider?[registry.get(facadeProvider).describe()]:registry.describe());
+      const historyCapability=url.pathname.match(/^\/v1\/history\/([^/]+)\/capabilities$/);
+      if(req.method==='GET'&&historyCapability){
+        const provider=decodeURIComponent(historyCapability[1]).trim().toLowerCase();
+        if(facadeProvider&&provider!==facadeProvider)return send(res,404,openAiError('provider is not served by this facade','invalid_request_error','provider_not_found'));
+        const adapter=registry.get(provider); return send(res,200,{provider,capabilities:adapter.capabilities||{},native_capabilities:adapter.nativeCapabilities||{}});
+      }
+      const history=historyRoute(url);
+      if(req.method==='GET'&&history){
+        if(facadeProvider&&history.provider!==facadeProvider)return send(res,404,openAiError('provider is not served by this facade','invalid_request_error','provider_not_found'));
+        const adapter=registry.get(history.provider); const caps=adapter.capabilities||{};
+        const isProject=history.path.startsWith('/v1/projects');
+        const allowed=isProject?(caps.projects||caps.project_conversations||caps.project_files):caps.conversations;
+        if(!allowed||typeof adapter.native!=='function')return send(res,501,openAiError(`${history.provider} does not expose history through the facade`,'unsupported_error','capability_not_exposed'));
+        const query=new URLSearchParams(url.searchParams); query.delete('provider'); const suffix=query.toString();
+        return send(res,200,await adapter.native('GET',`${history.path}${suffix?`?${suffix}`:''}`,null));
+      }
       if(req.method==='GET'&&url.pathname==='/v1/models'){
         const provider=facadeProvider||url.searchParams.get('provider'); if(!provider)return send(res,400,openAiError('provider is required','invalid_request_error','provider_required'));
         return send(res,200,await registry.get(provider).models());

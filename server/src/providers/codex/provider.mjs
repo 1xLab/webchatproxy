@@ -43,7 +43,7 @@ export class CodexProvider {
     this.modelsList = (process.env.CODEX_MODELS || DEFAULT_MODELS.join(',')).split(',').map(x => x.trim()).filter(Boolean);
   }
 
-  describe() { return { id: this.id, concurrency: 1, capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false, cloud_environments: false, cloud_tasks: false }, upstream: this.endpoint }; }
+  describe() { return { id: this.id, concurrency: 1, capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false }, native_capabilities: { models: true, chat: true, cloud_environments: true, cloud_tasks: true, cloud_turns: true }, upstream: this.endpoint }; }
 
   async health() { return { ok: (await this.auth.status()).authenticated }; }
 

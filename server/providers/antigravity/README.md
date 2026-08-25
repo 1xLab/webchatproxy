@@ -32,8 +32,13 @@ Install `systemd/webchat-antigravity.service`, then enable/start `webchat-antigr
 
 The provider-neutral MCP router exposes the same backend as provider `antigravity` through port 8100; it never falls back to another provider.
 
-## Capability boundary
+## Facade and native capabilities
 
-Antigravity exposes the `agy` model catalog and chat execution only. It does not expose projects, project files, project-scoped conversations, or a provider history API.
+The WebChatProxy facade exposes the `agy` model catalog and chat execution only. The native `agy` CLI supports project and conversation selection directly:
 
-Live validation of `/v1/projects` and `/v1/conversations` returns `404`; Google account/session state remains owned by the `agy` CLI.
+- `--project <id-or-name>` selects a project.
+- `--new-project` creates a project for the session.
+- `--conversation <id>` resumes a conversation.
+- `--continue` resumes the most recent conversation.
+
+Live validation of `/v1/projects` and `/v1/conversations` returning `404` describes the facade only; Google project/session state remains owned by the `agy` CLI.

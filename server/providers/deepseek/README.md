@@ -39,12 +39,14 @@ The installer fetches only the exact pinned upstream commit, verifies the result
 
 `start.sh` fails closed if the pinned engine has not already been installed and built.
 
-## Capability boundary
+## Facade and native capabilities
 
-DeepSeek exposes only the provider chat contract. It does not expose ChatGPT-style projects, project files, project-scoped conversations, or conversation history endpoints.
+The WebChatProxy facade exposes only the provider chat contract:
 
 - `GET /health`
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
-Live validation of `/v1/projects` and `/v1/conversations` returns `404`; this is an intentional unsupported capability, not an authentication signal.
+The pinned native library does support conversation sessions. It persists session lineage in `DS_SESSION_FILE` and accepts `chat_session_id`, `conversation_id`, `previous_response_id`, or matching message history to continue a session. It does not define a project entity/API at the pinned upstream commit.
+
+Therefore a facade `404` for `/v1/projects` is not evidence that the native session capability is absent; it means only that the proxy has not exposed a project route.

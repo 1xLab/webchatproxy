@@ -19,7 +19,7 @@ OAuth-backed Codex Responses provider for the WebChatProxy OpenAI-compatible fac
 - `POST /v1/jobs`
 - `GET /v1/jobs/{job_id}`
 
-The local Codex facade does not expose ChatGPT project or conversation routes. Its Responses requests use `store: false`, so `conversation_id` is intentionally `null`.
+The local Codex facade does not expose project or conversation routes. Its Responses requests use `store: false`, so `conversation_id` is intentionally `null`.
 
 ## Codex Cloud resources
 
@@ -30,7 +30,7 @@ The authenticated Codex Cloud account exposes remote environments and tasks thro
 - `GET /backend-api/wham/tasks/{task_id}`
 - `POST /backend-api/wham/tasks`
 
-An environment identifies the connected remote repository. The current API does not use `/backend-api/wham/projects`; project/repository discovery is represented by environments.
+An environment is the native Codex Cloud project/repository container. The current API does not use `/backend-api/wham/projects`; project/repository discovery is represented by environments, and task turns provide cloud conversation history.
 
 ## Authentication
 

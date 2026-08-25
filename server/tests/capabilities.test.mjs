@@ -4,8 +4,9 @@ import { HttpProviderAdapter } from '../src/core/http-provider-adapter.mjs';
 import { CodexProvider } from '../src/providers/codex/provider.mjs';
 
 test('HTTP providers do not claim conversation support by default', () => {
-  const adapter = new HttpProviderAdapter({ id: 'deepseek', baseUrl: 'http://127.0.0.1:1' });
+  const adapter = new HttpProviderAdapter({ id: 'deepseek', baseUrl: 'http://127.0.0.1:1', nativeCapabilities: { conversations: true } });
   assert.equal(adapter.describe().capabilities.conversations, false);
+  assert.equal(adapter.describe().native_capabilities.conversations, true);
 });
 
 test('Codex does not claim local project or conversation support', () => {
@@ -18,7 +19,12 @@ test('Codex does not claim local project or conversation support', () => {
     projects: false,
     project_conversations: false,
     project_files: false,
-    cloud_environments: false,
-    cloud_tasks: false,
+  });
+  assert.deepEqual(provider.describe().native_capabilities, {
+    models: true,
+    chat: true,
+    cloud_environments: true,
+    cloud_tasks: true,
+    cloud_turns: true,
   });
 });

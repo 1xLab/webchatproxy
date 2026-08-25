@@ -18,6 +18,7 @@ const specs = [
     token: process.env.CHATGPT_UPSTREAM_TOKEN || null,
     tokenFile: process.env.CHATGPT_UPSTREAM_TOKEN_FILE || null,
     capabilities: { models: true, chat: true, streaming: true, conversations: true, projects: true, project_conversations: true, project_files: true },
+    nativeCapabilities: { models: true, chat: true, conversations: true, projects: true, project_conversations: true, project_files: true },
     facadePort: Number(process.env.CHATGPT_PORT || 3210),
   },
   {
@@ -27,6 +28,7 @@ const specs = [
     token: process.env.DEEPSEEK_UPSTREAM_TOKEN || null,
     tokenFile: process.env.DEEPSEEK_UPSTREAM_TOKEN_FILE || null,
     capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false },
+    nativeCapabilities: { models: true, chat: true, conversations: true, conversation_sessions: true, projects: false },
     facadePort: Number(process.env.DEEPSEEK_PORT || 3220),
   },
   {
@@ -36,6 +38,7 @@ const specs = [
     token: process.env.KIMI_UPSTREAM_TOKEN || null,
     tokenFile: process.env.KIMI_UPSTREAM_TOKEN_FILE || 'kimi/.api-key',
     capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false },
+    nativeCapabilities: { models: true, chat: true, conversations: true, conversation_sessions: true, session_controls: true, projects: false },
     facadePort: Number(process.env.KIMI_PORT || 3230),
   },
   {
@@ -45,6 +48,7 @@ const specs = [
     token: process.env.ANTIGRAVITY_UPSTREAM_TOKEN || null,
     tokenFile: process.env.ANTIGRAVITY_UPSTREAM_TOKEN_FILE || 'antigravity-pool/.api-key',
     capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false },
+    nativeCapabilities: { models: true, chat: true, conversations: true, projects: true, project_selection: true, project_creation: true },
     facadePort: Number(process.env.ANTIGRAVITY_PORT || 3240),
   },
 ];
@@ -58,6 +62,7 @@ for (const spec of specs) {
     staticToken: spec.token,
     tokenFile: spec.tokenFile,
     capabilities: spec.capabilities,
+    nativeCapabilities: spec.nativeCapabilities,
   }));
 }
 

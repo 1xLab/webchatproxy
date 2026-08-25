@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
 export class HttpProviderAdapter {
-  constructor({ id, baseUrl, concurrency = 1, runtimeDir, staticToken = null, tokenFile = null, capabilities = null }) {
+  constructor({ id, baseUrl, concurrency = 1, runtimeDir, staticToken = null, tokenFile = null, capabilities = null, nativeCapabilities = null }) {
     this.id = id;
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.concurrency = Math.max(1, Number(concurrency) || 1);
@@ -10,10 +10,11 @@ export class HttpProviderAdapter {
     this.staticToken = staticToken;
     this.tokenFile = tokenFile;
     this.capabilities = Object.freeze(capabilities || { models: true, chat: true, streaming: true, conversations: false });
+    this.nativeCapabilities = Object.freeze(nativeCapabilities || {});
   }
 
   describe() {
-    return { id: this.id, concurrency: this.concurrency, capabilities: this.capabilities, upstream: this.baseUrl };
+    return { id: this.id, concurrency: this.concurrency, capabilities: this.capabilities, native_capabilities: this.nativeCapabilities, upstream: this.baseUrl };
   }
 
   async #token() {

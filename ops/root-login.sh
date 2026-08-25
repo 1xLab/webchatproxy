@@ -14,7 +14,7 @@ Usage:
   sudo ops/root-login.sh --deepseek
   sudo ops/root-login.sh --kimi
   sudo ops/root-login.sh --codex
-  sudo ops/root-login.sh --gateway-token
+  sudo ops/root-login.sh --gateway-token [TOKEN]
   sudo ops/root-login.sh --all
 
 Examples:
@@ -77,14 +77,17 @@ login_codex() {
 
 login_gateway() {
   local token
-  printf 'Universal gateway token: ' >&2
-  IFS= read -r -s token
-  printf '\n' >&2
-  [ -n "$token" ] || { echo "ERROR: empty gateway token" >&2; return 64; }
+  token="${1:-}"
+  if [ -z "$token" ]; then
+    token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+    echo "Generated a new universal gateway token." >&2
+  fi
+  [ -n "$token" ] || { echo "ERROR: could not generate gateway token" >&2; return 1; }
   umask 077
   printf 'WEBCHAT_UNIVERSAL_API_TOKEN=%s\n' "$token" > "$ROOT/runtime/webchatproxy.env"
   chown "$USER_NAME:$USER_NAME" "$ROOT/runtime/webchatproxy.env"
   chmod 600 "$ROOT/runtime/webchatproxy.env"
+  systemctl restart webchatproxy.service
   echo "Universal gateway token saved."
 }
 
@@ -99,7 +102,10 @@ while [ "$#" -gt 0 ]; do
     --deepseek) login_deepseek; shift ;;
     --kimi) login_kimi; shift ;;
     --codex) login_codex; shift ;;
-    --gateway-token) login_gateway; shift ;;
+    --gateway-token)
+      shift
+      if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then login_gateway "$1"; shift; else login_gateway; fi
+      ;;
     --all)
       for account in $(seq 1 10); do login_agy "$account"; done
       login_chatgpt

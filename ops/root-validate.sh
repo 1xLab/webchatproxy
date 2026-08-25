@@ -39,10 +39,20 @@ for port in 3200 3230 3240 3250 3340; do
 done
 
 echo "== runtime material =="
+missing_runtime=0
 for path in \
   "$ROOT/runtime" \
   "$ROOT/runtime/antigravity-pool/.api-key"; do
   if [ -e "$path" ]; then echo "present: $path"; else echo "missing: $path"; fi
 done
+[ -s "$ROOT/runtime/webchatproxy.env" ] || { echo "ERROR: missing runtime/webchatproxy.env" >&2; missing_runtime=1; }
+[ -s "$ROOT/runtime/antigravity-pool/.api-key" ] || { echo "ERROR: missing Antigravity pool API key" >&2; missing_runtime=1; }
+[ -s "$ROOT/runtime/codex/auth.json" ] || echo "WARNING: Codex OAuth is not authorized"
+[ -s "$ROOT/runtime/kimi/access_token" ] || echo "WARNING: Kimi access token is not configured"
+
+if ((missing_runtime)); then
+  echo "WebChatProxy validation failed: essential runtime material is missing." >&2
+  exit 1
+fi
 
 echo "WebChatProxy validation passed."

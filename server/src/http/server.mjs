@@ -28,6 +28,46 @@ function historyRoute(url){
   return id ? {provider,path:`/v1/conversations/${encodeURIComponent(id)}`} : {provider,path:'/v1/conversations'};
 }
 
+export function createForwardingServer({ upstream, provider, token = '' }) {
+  const targetBase = String(upstream || '').replace(/\/$/, '');
+  const fixedProvider = String(provider || '').trim().toLowerCase();
+  return http.createServer(async (req, res) => {
+    try {
+      const incoming = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const target = new URL(`${targetBase}${incoming.pathname}`);
+      for (const [key, value] of incoming.searchParams) target.searchParams.append(key, value);
+      if (incoming.pathname === '/v1/models') target.searchParams.set('provider', fixedProvider);
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (!['connection', 'content-length', 'host', 'transfer-encoding'].includes(key.toLowerCase()) && value != null) headers.set(key, Array.isArray(value) ? value.join(',') : value);
+      }
+      if (!headers.has('authorization') && token) headers.set('authorization', `Bearer ${token}`);
+      let body = null;
+      if (!['GET', 'HEAD'].includes(req.method || 'GET')) {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const raw = Buffer.concat(chunks);
+        if (raw.length > 2 * 1024 * 1024) return send(res, 413, openAiError('request_body_too_large', 'invalid_request_error'));
+        if (raw.length && headers.get('content-type')?.includes('application/json')) {
+          const payload = JSON.parse(raw.toString('utf8'));
+          if (payload && typeof payload === 'object' && !Array.isArray(payload) && ['/v1/chat/completions', '/v1/jobs'].includes(incoming.pathname)) {
+            payload.provider = fixedProvider;
+            body = JSON.stringify(payload);
+          } else body = raw;
+        } else body = raw;
+      }
+      const response = await fetch(target, { method: req.method, headers, body });
+      res.writeHead(response.status, Object.fromEntries([...response.headers].filter(([key]) => !['connection', 'content-length', 'transfer-encoding'].includes(key))));
+      if (!response.body) return res.end();
+      for await (const chunk of response.body) res.write(chunk);
+      res.end();
+    } catch (error) {
+      if (!res.headersSent) send(res, 502, openAiError(error.message, 'gateway_error', 'forwarding_failed'));
+      else res.end();
+    }
+  });
+}
+
 export function createHttpServer({registry,jobs,usage=null,token='',fixedProvider=null,codex=null}){
   const facadeProvider=fixedProvider?String(fixedProvider).trim().toLowerCase():null;
   if(facadeProvider)registry.get(facadeProvider);

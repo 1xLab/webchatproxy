@@ -103,12 +103,16 @@ ensure_deepseek_browser() {
 }
 
 login_kimi() {
+  systemctl stop webchatproxy-chatgpt-runtime.service || true
+  systemctl restart webchatproxy-browser-login.service
   systemctl stop webchatproxy-kimi-runtime.service || true
-  if ! run_agent "cd '$SERVER' && bash providers/kimi/engine/import-token.sh"; then
+  if ! bash "$ROOT/ops/kimi-browser-login.sh"; then
     systemctl start webchatproxy-kimi-runtime.service || true
+    systemctl start webchatproxy-chatgpt-runtime.service || true
     return 1
   fi
   systemctl start webchatproxy-kimi-runtime.service
+  systemctl start webchatproxy-chatgpt-runtime.service || true
 }
 
 login_codex() {

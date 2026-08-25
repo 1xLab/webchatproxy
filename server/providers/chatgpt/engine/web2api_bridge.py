@@ -495,47 +495,59 @@ class EngineBridge:
             return await self.chat_stream(request, args)
         async with self.mutation_lock:
             driver = await self.ensure_driver()
-            result = await do_chat_completion(driver, args, self.config)
-            conv_id = str(result.get("conversation_id") or driver._current_conv_id or "")
-            result["conversation_id"] = conv_id
-            result["content"] = await self.reconcile_assistant(driver, conv_id)
+            try:
+                if not args.get("conversation_id"):
+                    # The facade is explicit: omitting an id means a new chat.
+                    # The upstream MCP helper otherwise auto-continues the tab.
+                    driver._current_conv_id = None
+                result = await do_chat_completion(driver, args, self.config)
+                conv_id = str(result.get("conversation_id") or driver._current_conv_id or "")
+                result["conversation_id"] = conv_id
+                result["content"] = await self.reconcile_assistant(driver, conv_id)
+            except Exception:
+                # A failed fresh turn can leave a temporary WEB id in the shared
+                # driver. Never let the next request auto-continue that state.
+                driver._current_conv_id = None
+                raise
         return web.json_response(result)
 
     async def chat_stream(self, request: web.Request, args: dict[str, Any]) -> web.StreamResponse:
         driver = await self.ensure_driver()
         async with self.mutation_lock:
-            model = str(args.get("model") or "auto")
-            project_id = args.get("project_id") or None
-            conversation_id = args.get("conversation_id") or None
-            system_prompt = args.get("system_prompt") or None
-            message = str(args.get("message") or "")
-            full_text = f"[System Instructions]\n{system_prompt}\n\n[User]\n{message}" if system_prompt else message
-            if model != "auto":
-                await driver.select_model(model)
-            if conversation_id:
-                await driver.navigate_conversation(conversation_id)
-            elif driver._current_conv_id and not system_prompt and not project_id:
-                await driver.ensure_current_conversation(driver._current_conv_id)
-            else:
-                await driver.navigate_new_chat(gizmo_id=project_id)
+            try:
+                model = str(args.get("model") or "auto")
+                project_id = args.get("project_id") or None
+                conversation_id = args.get("conversation_id") or None
+                system_prompt = args.get("system_prompt") or None
+                message = str(args.get("message") or "")
+                full_text = f"[System Instructions]\n{system_prompt}\n\n[User]\n{message}" if system_prompt else message
+                if model != "auto":
+                    await driver.select_model(model)
+                if conversation_id:
+                    await driver.navigate_conversation(conversation_id)
+                else:
+                    await driver.navigate_new_chat(gizmo_id=project_id)
 
-            # Important: do not forward raw DOM deltas. ChatGPT can replace a
-            # temporary reasoning/status node (e.g. "Pensando") with the final
-            # answer, and the upstream delta logic can then leak that placeholder
-            # and lose the beginning of the real text. We still consume the
-            # stream so generation/completion detection works, but emit only the
-            # reconciled canonical response after completion.
-            budgets = DetectorBudgets.from_config(self.config.chatgpt, model)
-            async for _chunk in driver.send_and_stream(
-                message if not system_prompt else full_text,
-                timeout=120,
-                budgets=budgets,
-                model=model,
-            ):
-                pass
+                # Important: do not forward raw DOM deltas. ChatGPT can replace a
+                # temporary reasoning/status node (e.g. "Pensando") with the final
+                # answer, and the upstream delta logic can then leak that placeholder
+                # and lose the beginning of the real text. We still consume the
+                # stream so generation/completion detection works, but emit only the
+                # reconciled canonical response after completion.
+                budgets = DetectorBudgets.from_config(self.config.chatgpt, model)
+                async for _chunk in driver.send_and_stream(
+                    message if not system_prompt else full_text,
+                    timeout=120,
+                    budgets=budgets,
+                    model=model,
+                ):
+                    pass
 
-            conv_id = str(driver._current_conv_id or conversation_id or "")
-            canonical = await self.reconcile_assistant(driver, conv_id)
+                conv_id = str(driver._current_conv_id or conversation_id or "")
+                canonical = await self.reconcile_assistant(driver, conv_id)
+            except Exception:
+                driver._current_conv_id = None
+                raise
 
             response = web.StreamResponse(status=200, headers={
                 "Content-Type": "text/event-stream; charset=utf-8",

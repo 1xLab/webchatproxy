@@ -13,7 +13,7 @@ function errPayload(error){return {error:{message:error.message||String(error),t
 const server=http.createServer(async(req,res)=>{try{
  const url=new URL(req.url||'/',`http://${req.headers.host||host}`);
  if(req.method==='GET'&&url.pathname==='/health'){try{const h=await engine.health();return send(res,200,{service:'chatgpt-runtime',ok:h.driver_connected===true,engine:h});}catch(e){return send(res,503,{service:'chatgpt-runtime',ok:false,error:e.message,code:e.code||null});}}
-  if(req.method==='GET'&&url.pathname==='/v1/models'){const models=await engine.listModels();return send(res,200,{object:'list',data:models.map(m=>({id:m.id||m.slug||'auto',object:'model',created:0,owned_by:'chatgpt-web',title:m.title||null}))});}
+  if(req.method==='GET'&&url.pathname==='/v1/models'){const models=await engine.listModels();return send(res,200,{object:'list',data:models.map(m=>({id:m.id??m.slug,object:'model',created:0,owned_by:'chatgpt-web',title:m.title??null})).filter(m=>typeof m.id==='string'&&m.id.length>0)});}
   if(req.method==='GET'&&url.pathname==='/v1/projects'){return send(res,200,{projects:await engine.listProjects()});}
   if(req.method==='POST'&&url.pathname==='/v1/projects'){return send(res,201,await engine.createProject(await readJson(req)));}
   const projectInstructions=url.pathname.match(/^\/v1\/projects\/([^/]+)\/instructions$/);

@@ -183,12 +183,12 @@ export class GatewayRuntime {
     this.assertReady();
     const models = await this.engine.listModels();
     return models.map((model) => ({
-      id: model.id || model.slug || "auto",
+      id: model.id ?? model.slug,
       object: "model",
       created: 0,
       owned_by: "chatgpt-web",
-      title: model.title || null,
-    }));
+      title: model.title ?? null,
+    })).filter((model) => typeof model.id === "string" && model.id.length > 0);
   }
 
   async listProjects({ live = false, sync = true } = {}) {

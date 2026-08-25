@@ -49,6 +49,15 @@ check_http() {
   rm -f "$body"
 }
 
+check_active_agy_worker() {
+  local port="$1" account="$2"
+  if ! systemctl is-active --quiet "webchatproxy-antigravity@$account.service"; then
+    echo "SKIP agy-worker-$port service inactive"
+    return 0
+  fi
+  check_http "agy-worker-$port" "http://127.0.0.1:$port/health" ""
+}
+
 echo "== credential files =="
 check_file "$TOKEN_FILE"
 check_file "$RUNTIME/codex/auth.json"
@@ -66,10 +75,9 @@ fi
 echo "== provider checks =="
 check_http chatgpt-runtime http://127.0.0.1:3310/health ""
 check_http chatgpt-models http://127.0.0.1:3210/v1/models token
-check_http deepseek-models http://127.0.0.1:3220/v1/models "$(cat "$RUNTIME/deepseek/.api-key" 2>/dev/null || true)"
-check_http kimi-runtime http://127.0.0.1:3330/health "$(cat "$RUNTIME/kimi/.api-key" 2>/dev/null || true)"
-check_http kimi-models http://127.0.0.1:3230/v1/models "$(cat "$RUNTIME/kimi/.api-key" 2>/dev/null || true)"
-check_http antigravity-models http://127.0.0.1:3340/v1/models "$(cat "$RUNTIME/antigravity-pool/.api-key" 2>/dev/null || true)"
+check_http deepseek-models http://127.0.0.1:3220/v1/models token
+check_http kimi-models http://127.0.0.1:3230/v1/models token
+check_http antigravity-models http://127.0.0.1:3240/v1/models token
 
 echo "== Codex OAuth =="
 codex_status="$(curl --max-time 30 -sS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3250/v1/auth/codex/status || true)"
@@ -81,9 +89,9 @@ else
 fi
 
 echo "== AGY workers =="
-for port in 3251 3252 3253; do
-  check_http "agy-worker-$port" "http://127.0.0.1:$port/health" ""
-done
+check_active_agy_worker 3251 1
+check_active_agy_worker 3252 2
+check_active_agy_worker 3253 3
 
 if ((failures)); then
   echo "Provider validation failed: $failures check(s)." >&2

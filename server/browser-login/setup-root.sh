@@ -6,6 +6,7 @@ TEMPLATE="$ROOT/server/cwp/webchatlogin.stpl"
 [ -f "$TEMPLATE" ] || TEMPLATE="$ROOT/webchatlogin.stpl"
 UNIT="$ROOT/server/systemd/webchatproxy-browser-login.service"
 AUTH_FILE=/etc/nginx/.webchatproxy-browser-login.htpasswd
+PASSWORD_FILE=/etc/nginx/.webchatproxy-browser-login.password
 
 install -o root -g root -m 0644 "$UNIT" /etc/systemd/system/webchatproxy-browser-login.service
 mkdir -p /usr/local/cwpsrv/htdocs/resources/conf/web_servers/vhosts/nginx/php-fpm
@@ -27,11 +28,24 @@ else
   exit 1
 fi
 
-TOKEN="$(sed -n 's/^WEBCHAT_UNIVERSAL_API_TOKEN=//p' "$ROOT/runtime/webchatproxy.env" 2>/dev/null || true)"
-[ -n "$TOKEN" ] || { echo "WEBCHAT_UNIVERSAL_API_TOKEN is missing" >&2; exit 1; }
-printf '%s\n' "$TOKEN" | "$HT" -i -B -c "$AUTH_FILE" login
+if [ -s "$PASSWORD_FILE" ]; then
+  PASSWORD="$(cat "$PASSWORD_FILE")"
+elif [ -n "${WEBCHAT_BROWSER_PASSWORD:-}" ]; then
+  PASSWORD="$WEBCHAT_BROWSER_PASSWORD"
+  umask 077
+  printf '%s\n' "$PASSWORD" > "$PASSWORD_FILE"
+else
+  umask 077
+  PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+  printf '%s\n' "$PASSWORD" > "$PASSWORD_FILE"
+  echo "Generated browser portal password: $PASSWORD"
+fi
+[ -n "$PASSWORD" ] || { echo "Browser portal password is empty" >&2; exit 1; }
+printf '%s\n' "$PASSWORD" | "$HT" -i -B -c "$AUTH_FILE" login
 chown root:nobody "$AUTH_FILE"
 chmod 640 "$AUTH_FILE"
+chown root:root "$PASSWORD_FILE"
+chmod 600 "$PASSWORD_FILE"
 
 systemctl daemon-reload
 systemctl restart webchatproxy-browser-login.service

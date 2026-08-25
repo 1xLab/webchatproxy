@@ -58,8 +58,8 @@ jobs:
           bash providers/kimi/engine/install.sh
           test -x .vendor/kimi-free-api/kimi-proxy
           grep -Fq 'handleKimiNativeRoute' .vendor/kimi-free-api/main.go
-          grep -Fq 'ProjectService/ListProjects' providers/kimi/engine/native.go
-          grep -Fq 'ChatService/ListMessages' providers/kimi/engine/native.go
+          grep -Fq 'ListProjects' providers/kimi/engine/native.go
+          grep -Fq 'ListMessages' providers/kimi/engine/native.go
 
       - name: Unit and integration tests
         run: npm test

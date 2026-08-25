@@ -18,6 +18,10 @@ trap cleanup EXIT INT TERM
 
 Xvfb "$DISPLAY" -screen 0 1920x1080x24 -ac -nolisten tcp &
 sleep 1
+if command -v xfwm4 >/dev/null 2>&1; then
+  xfwm4 --replace --compositor=off >/tmp/webchatproxy-xfwm4.log 2>&1 &
+  sleep 1
+fi
 x11vnc -display "$DISPLAY" -localhost -rfbport "$VNC_PORT" -forever -shared -nopw -noxdamage &
 "$NOVNC_DIR/utils/novnc_proxy" --listen "127.0.0.1:$WEB_PORT" --vnc "127.0.0.1:$VNC_PORT" --web "$NOVNC_DIR" &
 if curl --max-time 2 -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then

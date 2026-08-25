@@ -56,7 +56,7 @@ login_chatgpt() {
 login_deepseek() {
   ensure_deepseek_browser
   systemctl stop webchatproxy-deepseek-runtime.service || true
-  if ! run_agent "cd '$SERVER' && bash providers/deepseek/engine/login.sh"; then
+  if ! run_agent "cd '$SERVER' && DISPLAY='${WEBCHAT_DISPLAY:-:100}' DS_CDP='http://127.0.0.1:9333' bash providers/deepseek/engine/login.sh"; then
     systemctl start webchatproxy-deepseek-runtime.service || true
     return 1
   fi

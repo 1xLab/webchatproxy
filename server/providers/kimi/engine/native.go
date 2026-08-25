@@ -126,12 +126,12 @@ func handleKimiNativeRoute(w http.ResponseWriter, r *http.Request) bool {
     path := strings.TrimSuffix(r.URL.Path, "/")
 
     if path == "/v1/projects" && r.Method == http.MethodGet {
-        writeKimiNative(w, kimiProjectService+"ListProjects", map[string]interface{}{})
+        writeKimiNative(w, kimiProjectService+"ListProjects", map[string]interface{}{"page_size": 50, "page_token": ""})
         return true
     }
 
     if path == "/v1/conversations" && r.Method == http.MethodGet {
-        payload := map[string]interface{}{}
+        payload := map[string]interface{}{"page_size": 50, "page_token": ""}
         if projectID := firstQuery(r.URL.Query(), "project_id", "projectId"); projectID != "" {
             payload["projectId"] = projectID
         }
@@ -156,7 +156,7 @@ func handleKimiNativeRoute(w http.ResponseWriter, r *http.Request) bool {
             return true
         }
         if len(parts) == 2 && parts[1] == "conversations" && r.Method == http.MethodGet {
-            writeKimiNative(w, kimiChatService+"ListChats", map[string]interface{}{"projectId": projectID})
+            writeKimiNative(w, kimiChatService+"ListChats", map[string]interface{}{"projectId": projectID, "page_size": 50, "page_token": ""})
             return true
         }
         if len(parts) == 2 && parts[1] == "conversations" && r.Method == http.MethodPost {

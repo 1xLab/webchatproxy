@@ -5,12 +5,9 @@ The bridge is intentionally thin: business operations delegate to the pinned
 upstream do_* functions. Chrome/CDP ownership stays here; the public Node gateway
 remains responsible for external auth, jobs and compatibility.
 
-Chat generation has one deliberate hardening layer: the upstream DOM stream can
-briefly expose UI-state text such as "Thinking"/"Pensando" and then replace that
-node with the real assistant answer. Delta calculation across that replacement
-can leak the placeholder and truncate the beginning of the final answer. We use
-the DOM stream only to drive/wait for generation, then reconcile the result from
-the canonical conversation tree before returning it to callers.
+Chat generation delegates response assembly and streaming to the pinned
+upstream engine. The bridge does not perform a second post-generation fetch of
+the conversation tree.
 """
 from __future__ import annotations
 
@@ -495,60 +492,26 @@ class EngineBridge:
             return await self.chat_stream(request, args)
         async with self.mutation_lock:
             driver = await self.ensure_driver()
-            try:
-                if not args.get("conversation_id"):
-                    # The facade is explicit: omitting an id means a new chat.
-                    # The upstream MCP helper otherwise auto-continues the tab.
-                    driver._current_conv_id = None
-                result = await do_chat_completion(driver, args, self.config)
-                conv_id = str(result.get("conversation_id") or driver._current_conv_id or "")
-                result["conversation_id"] = conv_id
-                result["content"] = await self.reconcile_assistant(driver, conv_id)
-            except Exception:
-                # A failed fresh turn can leave a temporary WEB id in the shared
-                # driver. Never let the next request auto-continue that state.
-                driver._current_conv_id = None
-                raise
+            result = await do_chat_completion(driver, args, self.config)
         return web.json_response(result)
 
     async def chat_stream(self, request: web.Request, args: dict[str, Any]) -> web.StreamResponse:
         driver = await self.ensure_driver()
         async with self.mutation_lock:
-            try:
-                model = str(args.get("model") or "auto")
-                project_id = args.get("project_id") or None
-                conversation_id = args.get("conversation_id") or None
-                system_prompt = args.get("system_prompt") or None
-                message = str(args.get("message") or "")
-                full_text = f"[System Instructions]\n{system_prompt}\n\n[User]\n{message}" if system_prompt else message
-                if model != "auto":
-                    await driver.select_model(model)
-                if conversation_id:
-                    await driver.navigate_conversation(conversation_id)
-                else:
-                    await driver.navigate_new_chat(gizmo_id=project_id)
-
-                # Important: do not forward raw DOM deltas. ChatGPT can replace a
-                # temporary reasoning/status node (e.g. "Pensando") with the final
-                # answer, and the upstream delta logic can then leak that placeholder
-                # and lose the beginning of the real text. We still consume the
-                # stream so generation/completion detection works, but emit only the
-                # reconciled canonical response after completion.
-                budgets = DetectorBudgets.from_config(self.config.chatgpt, model)
-                async for _chunk in driver.send_and_stream(
-                    message if not system_prompt else full_text,
-                    timeout=120,
-                    budgets=budgets,
-                    model=model,
-                ):
-                    pass
-
-                conv_id = str(driver._current_conv_id or conversation_id or "")
-                canonical = await self.reconcile_assistant(driver, conv_id)
-            except Exception:
-                driver._current_conv_id = None
-                raise
-
+            model = str(args.get("model") or "auto")
+            project_id = args.get("project_id") or None
+            conversation_id = args.get("conversation_id") or None
+            system_prompt = args.get("system_prompt") or None
+            message = str(args.get("message") or "")
+            full_text = f"[System Instructions]\n{system_prompt}\n\n[User]\n{message}" if system_prompt else message
+            if model != "auto":
+                await driver.select_model(model)
+            if conversation_id:
+                await driver.navigate_conversation(conversation_id)
+            elif driver._current_conv_id and not system_prompt and not project_id:
+                await driver.ensure_current_conversation(driver._current_conv_id)
+            else:
+                await driver.navigate_new_chat(gizmo_id=project_id)
             response = web.StreamResponse(status=200, headers={
                 "Content-Type": "text/event-stream; charset=utf-8",
                 "Cache-Control": "no-cache",
@@ -558,25 +521,34 @@ class EngineBridge:
             completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
             created = int(time.time())
             try:
-                payload = {
-                    "id": completion_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": model,
-                    "choices": [{"index": 0, "delta": {"content": canonical}, "finish_reason": None}],
-                }
-                await response.write(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode())
-                final_payload = {
-                    "id": completion_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": model,
-                    "conversation_id": conv_id,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                }
-                await response.write(
-                    f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\ndata: [DONE]\n\n".encode()
-                )
+                await response.write(f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]}, ensure_ascii=False)}\n\n".encode())
+                async for chunk in driver.send_and_stream(
+                    full_text,
+                    timeout=120,
+                    budgets=DetectorBudgets.from_config(self.config.chatgpt, model),
+                    model=model,
+                ):
+                    if chunk.delta:
+                        payload = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {"content": chunk.delta}, "finish_reason": None}],
+                        }
+                        await response.write(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode())
+                    if chunk.finish_reason:
+                        conv_id = str(driver._current_conv_id or args.get("conversation_id") or "")
+                        final_payload = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": model,
+                            "conversation_id": conv_id,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": chunk.finish_reason}],
+                        }
+                        await response.write(f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n".encode())
+                await response.write(b"data: [DONE]\n\n")
             finally:
                 await response.write_eof()
             return response

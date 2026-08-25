@@ -49,8 +49,10 @@ login_agy() {
 }
 
 login_chatgpt() {
-  export DISPLAY="${WEBCHAT_DISPLAY:-:100}"
-  bash "$ROOT/login-chatgpt.sh"
+  systemctl stop webchatproxy-chatgpt-runtime.service || true
+  systemctl restart webchatproxy-browser-login.service
+  echo "ChatGPT browser login is ready at https://chatgpt.agent.imobi.tools/vnc.html?autoconnect=1"
+  echo "After completing login, run: systemctl start webchatproxy-chatgpt-runtime.service"
 }
 
 login_deepseek() {

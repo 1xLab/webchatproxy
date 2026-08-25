@@ -442,8 +442,6 @@ class EngineBridge:
                 "gpt_id": request.match_info["gpt_id"].strip(),
                 "message": str(body.get("message") or ""),
             })
-            conv_id = str(result.get("conversation_id") or driver._current_conv_id or "")
-            result["content"] = await self.reconcile_assistant(driver, conv_id)
         return web.json_response(result)
 
     def chat_args(self, body: dict[str, Any]) -> tuple[dict[str, Any], str]:

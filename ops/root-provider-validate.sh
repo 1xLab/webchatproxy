@@ -90,9 +90,9 @@ fi
 
 echo "== Codex live completion =="
 codex_body="$(mktemp)"
-codex_code="$(jq -n '{model:"gpt-5.5",messages:[{role:"user",content:"oi responda_ok"}]}' | curl --max-time 180 -sS -o "$codex_body" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' http://127.0.0.1:3250/v1/chat/completions --data-binary @- || true)"
+codex_code="$(jq -n '{model:"gpt-5.5",messages:[{role:"user",content:"oi. Responda exatamente: RESPONDA_OK"}]}' | curl --max-time 180 -sS -o "$codex_body" -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' http://127.0.0.1:3250/v1/chat/completions --data-binary @- || true)"
 codex_content="$(jq -r '.choices[0].message.content // ""' "$codex_body" 2>/dev/null || true)"
-if [ "$codex_code" = 200 ] && printf '%s' "$codex_content" | tr '[:upper:]' '[:lower:]' | grep -Fq 'responda_ok'; then
+if [ "$codex_code" = 200 ] && printf '%s' "$codex_content" | tr '[:lower:]' '[:upper:]' | grep -Fq 'RESPONDA_OK'; then
   echo "PASS codex-live model=gpt-5.5 content=${codex_content//$'\n'/ }"
 else
   echo "FAIL codex-live http=$codex_code model=gpt-5.5"

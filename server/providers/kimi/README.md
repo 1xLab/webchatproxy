@@ -43,6 +43,18 @@ The start script fails closed if the pinned engine is absent, the token is absen
 
 Both require `Authorization: Bearer <runtime/kimi/.api-key>`.
 
+## Capability boundary
+
+Kimi exposes models and chat only. It does not expose ChatGPT-style projects, project files, project-scoped conversations, or a history API through this provider.
+
+The upstream does expose session controls outside the OpenAI facade:
+
+- `GET /history` reports/toggles the stateful session mode.
+- `POST /history` enables or disables stateful session mode.
+- `POST /new` starts a fresh session.
+
+These are session controls, not a project list or queryable conversation-history API. Live validation of `/v1/projects` and `/v1/conversations` returns `404`; the provider's upstream session state must not be presented as a project API.
+
 ## Upstream audit notes
 
 The upstream uses global conversation state guarded by a mutex. Treat one Kimi provider process as one serialized account/session domain; do not assume independent per-client conversation state. The webchatproxy provider is isolated from ChatGPT and DeepSeek at process/runtime level.

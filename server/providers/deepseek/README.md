@@ -38,3 +38,13 @@ Runtime:
 The installer fetches only the exact pinned upstream commit, verifies the resulting HEAD, installs the frozen pnpm lockfile, and runs typecheck, lint, tests and build before the provider can be started.
 
 `start.sh` fails closed if the pinned engine has not already been installed and built.
+
+## Capability boundary
+
+DeepSeek exposes only the provider chat contract. It does not expose ChatGPT-style projects, project files, project-scoped conversations, or conversation history endpoints.
+
+- `GET /health`
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+
+Live validation of `/v1/projects` and `/v1/conversations` returns `404`; this is an intentional unsupported capability, not an authentication signal.

@@ -9,7 +9,7 @@ export class HttpProviderAdapter {
     this.runtimeDir = runtimeDir;
     this.staticToken = staticToken;
     this.tokenFile = tokenFile;
-    this.capabilities = Object.freeze(capabilities || { models: true, chat: true, streaming: true, conversations: true });
+    this.capabilities = Object.freeze(capabilities || { models: true, chat: true, streaming: true, conversations: false });
   }
 
   describe() {

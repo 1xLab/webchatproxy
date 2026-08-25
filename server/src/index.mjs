@@ -17,6 +17,7 @@ const specs = [
     concurrency: Number(process.env.CHATGPT_CONCURRENCY || 1),
     token: process.env.CHATGPT_UPSTREAM_TOKEN || null,
     tokenFile: process.env.CHATGPT_UPSTREAM_TOKEN_FILE || null,
+    capabilities: { models: true, chat: true, streaming: true, conversations: true, projects: true, project_conversations: true, project_files: true },
     facadePort: Number(process.env.CHATGPT_PORT || 3210),
   },
   {
@@ -25,6 +26,7 @@ const specs = [
     concurrency: Number(process.env.DEEPSEEK_CONCURRENCY || 2),
     token: process.env.DEEPSEEK_UPSTREAM_TOKEN || null,
     tokenFile: process.env.DEEPSEEK_UPSTREAM_TOKEN_FILE || null,
+    capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false },
     facadePort: Number(process.env.DEEPSEEK_PORT || 3220),
   },
   {
@@ -33,6 +35,7 @@ const specs = [
     concurrency: Number(process.env.KIMI_CONCURRENCY || 2),
     token: process.env.KIMI_UPSTREAM_TOKEN || null,
     tokenFile: process.env.KIMI_UPSTREAM_TOKEN_FILE || 'kimi/.api-key',
+    capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false },
     facadePort: Number(process.env.KIMI_PORT || 3230),
   },
   {
@@ -41,6 +44,7 @@ const specs = [
     concurrency: Number(process.env.ANTIGRAVITY_CONCURRENCY || 2),
     token: process.env.ANTIGRAVITY_UPSTREAM_TOKEN || null,
     tokenFile: process.env.ANTIGRAVITY_UPSTREAM_TOKEN_FILE || 'antigravity-pool/.api-key',
+    capabilities: { models: true, chat: true, streaming: true, conversations: false, projects: false, project_conversations: false, project_files: false },
     facadePort: Number(process.env.ANTIGRAVITY_PORT || 3240),
   },
 ];
@@ -53,6 +57,7 @@ for (const spec of specs) {
     runtimeDir,
     staticToken: spec.token,
     tokenFile: spec.tokenFile,
+    capabilities: spec.capabilities,
   }));
 }
 

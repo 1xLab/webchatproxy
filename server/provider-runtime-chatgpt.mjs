@@ -13,9 +13,21 @@ function errPayload(error){return {error:{message:error.message||String(error),t
 const server=http.createServer(async(req,res)=>{try{
  const url=new URL(req.url||'/',`http://${req.headers.host||host}`);
  if(req.method==='GET'&&url.pathname==='/health'){try{const h=await engine.health();return send(res,200,{service:'chatgpt-runtime',ok:h.driver_connected===true,engine:h});}catch(e){return send(res,503,{service:'chatgpt-runtime',ok:false,error:e.message,code:e.code||null});}}
- if(req.method==='GET'&&url.pathname==='/v1/models'){const models=await engine.listModels();return send(res,200,{object:'list',data:models.map(m=>({id:m.id||m.slug||'auto',object:'model',created:0,owned_by:'chatgpt-web',title:m.title||null}))});}
- if(req.method==='GET'&&url.pathname==='/v1/conversations'){const result=await engine.listConversations({projectId:url.searchParams.get('project_id')||null,all:url.searchParams.get('all')==='1',offset:Number(url.searchParams.get('offset')||0),limit:Number(url.searchParams.get('limit')||50)});return send(res,200,result);}
- const cm=url.pathname.match(/^\/v1\/conversations\/([^/]+)$/);if(cm&&req.method==='GET')return send(res,200,await engine.getConversation(decodeURIComponent(cm[1])));
+  if(req.method==='GET'&&url.pathname==='/v1/models'){const models=await engine.listModels();return send(res,200,{object:'list',data:models.map(m=>({id:m.id||m.slug||'auto',object:'model',created:0,owned_by:'chatgpt-web',title:m.title||null}))});}
+  if(req.method==='GET'&&url.pathname==='/v1/projects'){return send(res,200,{projects:await engine.listProjects()});}
+  if(req.method==='POST'&&url.pathname==='/v1/projects'){return send(res,201,await engine.createProject(await readJson(req)));}
+  const projectInstructions=url.pathname.match(/^\/v1\/projects\/([^/]+)\/instructions$/);
+  if(projectInstructions&&req.method==='PATCH')return send(res,200,await engine.updateProjectInstructions(decodeURIComponent(projectInstructions[1]),String((await readJson(req)).instructions||'')));
+  const projectFiles=url.pathname.match(/^\/v1\/projects\/([^/]+)\/files$/);
+  if(projectFiles&&req.method==='GET')return send(res,200,await engine.listProjectFiles(decodeURIComponent(projectFiles[1])));
+  const projectDelete=url.pathname.match(/^\/v1\/projects\/([^/]+)$/);
+  if(projectDelete&&req.method==='DELETE')return send(res,200,await engine.deleteProject(decodeURIComponent(projectDelete[1])));
+  const projectConversations=url.pathname.match(/^\/v1\/projects\/([^/]+)\/conversations$/);
+  if(projectConversations&&req.method==='GET')return send(res,200,await engine.listConversations({projectId:decodeURIComponent(projectConversations[1]),all:url.searchParams.get('all')==='1',offset:Number(url.searchParams.get('offset')||0),limit:Number(url.searchParams.get('limit')||50)}));
+  if(req.method==='GET'&&url.pathname==='/v1/conversations'){const result=await engine.listConversations({projectId:url.searchParams.get('project_id')||null,all:url.searchParams.get('all')==='1',offset:Number(url.searchParams.get('offset')||0),limit:Number(url.searchParams.get('limit')||50)});return send(res,200,result);}
+  const cm=url.pathname.match(/^\/v1\/conversations\/([^/]+)$/);if(cm&&req.method==='GET')return send(res,200,await engine.getConversation(decodeURIComponent(cm[1])));
+  const archive=url.pathname.match(/^\/v1\/conversations\/([^/]+)\/archive$/);if(archive&&req.method==='POST')return send(res,200,await engine.archiveConversation(decodeURIComponent(archive[1]),(await readJson(req)).archive!==false));
+  if(cm&&req.method==='DELETE')return send(res,200,await engine.deleteConversation(decodeURIComponent(cm[1])));
  if(req.method==='POST'&&url.pathname==='/v1/chat/completions'){
    const body=await readJson(req);if(!Array.isArray(body.messages)||!body.messages.length)return send(res,400,{error:{message:'messages must be a non-empty array',type:'invalid_request_error'}});
    const content=await engine.ask(body.messages,{timeout:Number(body.timeout)||210000,requestId:body.request_id||null,conversationId:body.conversation_id||null,projectId:body.project_id||null,model:body.model||'auto'});

@@ -13,6 +13,43 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 id "$USER_NAME" >/dev/null 2>&1 || { echo "Missing user: $USER_NAME" >&2; exit 78; }
 
+ensure_go() {
+  local version major minor
+  if command -v go >/dev/null 2>&1; then
+    version="$(go version | awk '{print $3}' | sed 's/^go//')"
+    major="${version%%.*}"
+    minor="${version#*.}"; minor="${minor%%.*}"
+    if ((major > 1 || (major == 1 && minor >= 21))); then return 0; fi
+    echo "Go $version is too old; installing Go 1.21+." >&2
+  else
+    echo "Go 1.21+ is missing; installing it for the Kimi provider." >&2
+  fi
+
+  if command -v dnf >/dev/null 2>&1; then
+    dnf install -y golang
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y golang
+  elif command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y golang
+  else
+    echo "ERROR: cannot install Go automatically; supported package managers: dnf, yum, apt-get" >&2
+    exit 79
+  fi
+
+  command -v go >/dev/null 2>&1 || { echo "ERROR: Go installation completed without a go binary" >&2; exit 79; }
+  version="$(go version | awk '{print $3}' | sed 's/^go//')"
+  major="${version%%.*}"
+  minor="${version#*.}"; minor="${minor%%.*}"
+  ((major > 1 || (major == 1 && minor >= 21))) || {
+    echo "ERROR: installed Go $version is below required 1.21" >&2
+    echo "Install a newer distribution Go package and rerun deploy.sh." >&2
+    exit 79
+  }
+}
+
+ensure_go
+
 mkdir -p "$RUNTIME" "$ROOT/browser-profile" "$ROOT/browser-profile-deepseek"
 chown -R "$USER_NAME:$USER_NAME" "$RUNTIME" "$ROOT/browser-profile" "$ROOT/browser-profile-deepseek"
 chmod 700 "$RUNTIME"

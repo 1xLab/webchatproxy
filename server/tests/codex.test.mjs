@@ -37,7 +37,18 @@ test('Codex provider maps Responses output and usage to OpenAI chat format', asy
     let request;
     globalThis.fetch = async (url, options) => {
       request = { url, options };
-      return Response.json({ model: 'gpt-5.4', output_text: 'CODEX_OK', usage: { input_tokens: 12, output_tokens: 4, total_tokens: 16 } });
+      if (String(url).includes('/oauth/token')) return Response.json({ id_token: '', access_token: 'access', refresh_token: 'refresh', expires_in: 3600 });
+      return new Response([
+        'event: response.output_text.delta',
+        'data: {"type":"response.output_text.delta","delta":"CODEX_"}',
+        '',
+        'event: response.output_text.delta',
+        'data: {"type":"response.output_text.delta","delta":"OK"}',
+        '',
+        'event: response.completed',
+        'data: {"type":"response.completed","response":{"model":"gpt-5.4","usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16}}}',
+        '',
+      ].join('\n'), { headers: { 'content-type': 'text/event-stream' } });
     };
     const provider = new CodexProvider({ runtimeDir: dir, endpoint: 'https://chatgpt.test/backend-api/codex/responses' });
     const result = await provider.chat({ model: 'gpt-5.4', messages: [{ role: 'user', content: 'test' }] });
@@ -45,7 +56,10 @@ test('Codex provider maps Responses output and usage to OpenAI chat format', asy
     assert.deepEqual(result.usage, { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 });
     assert.equal(request.url, 'https://chatgpt.test/backend-api/codex/responses');
     assert.equal(request.options.headers['ChatGPT-Account-Id'], 'acct-1');
-    assert.equal(JSON.parse(request.options.body).input[0].content, 'test');
+    const body = JSON.parse(request.options.body);
+    assert.equal(body.input[0].content, 'test');
+    assert.equal(body.stream, true);
+    assert.equal(body.store, false);
   } finally {
     globalThis.fetch = originalFetch;
     await rm(dir, { recursive: true, force: true });

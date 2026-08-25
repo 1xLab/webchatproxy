@@ -8,12 +8,29 @@ const DEFAULT_MODELS = [
   'gpt-5.6-sol-wm', 'gpt-5.6-terra-wm', 'gpt-5.6-luna-wm', 'gpt-5.6-mini', 'gpt-5.6-t-mini',
 ];
 
-function responseText(payload) {
-  if (typeof payload?.output_text === 'string') return payload.output_text;
-  const output = Array.isArray(payload?.output) ? payload.output : [];
-  return output.flatMap(item => Array.isArray(item.content) ? item.content : [])
-    .filter(item => item.type === 'output_text' || item.type === 'text')
-    .map(item => item.text || '').join('');
+async function readStream(response) {
+  const text = await response.text();
+  let content = '';
+  let usage = null;
+  let model = null;
+  let error = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue;
+    const raw = line.slice(5).trim();
+    if (!raw || raw === '[DONE]') continue;
+    let event;
+    try { event = JSON.parse(raw); } catch { continue; }
+    if (event.type === 'response.output_text.delta') content += event.delta || '';
+    if (event.type === 'response.output_text.done' && !content) content = event.text || '';
+    if (event.type === 'response.completed') {
+      const completed = event.response || {};
+      model = completed.model || model;
+      usage = completed.usage || usage;
+    }
+    if (event.type === 'response.failed' || event.type === 'error') error = event.error?.message || event.message || 'Codex response failed';
+  }
+  if (error) throw new Error(error);
+  return { content, usage, model };
 }
 
 export class CodexProvider {
@@ -45,14 +62,19 @@ export class CodexProvider {
   async chat(request, { signal } = {}) {
     const auth = await this.auth.accessToken();
     const input = Array.isArray(request.messages) ? request.messages.map(({ role, content }) => ({ role, content })) : request.input;
-    const body = { model: request.model || this.modelsList[0], input, stream: false, store: false };
+    const body = { model: request.model || this.modelsList[0], input, stream: true, store: false };
     let response = await this.#fetch(auth, body, signal);
     if (response.status === 401) response = await this.#fetch(await this.auth.refresh(), body, signal);
-    const text = await response.text();
-    const payload = text ? JSON.parse(text) : {};
-    if (!response.ok) { const error = new Error(payload?.error?.message || `Codex HTTP ${response.status}`); error.status = response.status; error.provider = this.id; throw error; }
-    const usage = payload.usage ? { prompt_tokens: payload.usage.input_tokens ?? payload.usage.prompt_tokens ?? 0, completion_tokens: payload.usage.output_tokens ?? payload.usage.completion_tokens ?? 0, total_tokens: payload.usage.total_tokens ?? 0 } : null;
-    return { content: responseText(payload), conversation_id: null, model: payload.model || body.model, finish_reason: 'stop', usage, raw: payload };
+    if (!response.ok) {
+      const text = await response.text();
+      let payload = {};
+      try { payload = text ? JSON.parse(text) : {}; } catch {}
+      const error = new Error(payload?.error?.message || payload?.detail || `Codex HTTP ${response.status}`);
+      error.status = response.status; error.provider = this.id; throw error;
+    }
+    const streamed = await readStream(response);
+    const usage = streamed.usage ? { prompt_tokens: streamed.usage.input_tokens ?? streamed.usage.prompt_tokens ?? 0, completion_tokens: streamed.usage.output_tokens ?? streamed.usage.completion_tokens ?? 0, total_tokens: streamed.usage.total_tokens ?? 0 } : null;
+    return { content: streamed.content, conversation_id: null, model: streamed.model || body.model, finish_reason: 'stop', usage, raw: streamed };
   }
 
   async #fetch(auth, body, signal) {

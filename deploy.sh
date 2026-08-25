@@ -17,11 +17,20 @@ mkdir -p "$RUNTIME" "$ROOT/browser-profile" "$ROOT/browser-profile-deepseek"
 chown -R "$USER_NAME:$USER_NAME" "$RUNTIME" "$ROOT/browser-profile" "$ROOT/browser-profile-deepseek"
 chmod 700 "$RUNTIME"
 
-# Install/build pinned provider runtimes. Each installer is idempotent.
-su -s /bin/bash "$USER_NAME" -c "cd '$SERVER' && bash providers/chatgpt/engine/install.sh"
-su -s /bin/bash "$USER_NAME" -c "cd '$SERVER' && bash providers/deepseek/engine/install.sh"
-su -s /bin/bash "$USER_NAME" -c "cd '$SERVER' && bash providers/kimi/engine/install.sh"
-su -s /bin/bash "$USER_NAME" -c "cd '$SERVER' && bash providers/antigravity/engine/install.sh"
+# Install/build pinned provider runtimes. A provider build failure must not
+# prevent the universal gateway and other independent providers from starting.
+failed_providers=()
+install_provider() {
+  local name="$1" script="$2"
+  if ! su -s /bin/bash "$USER_NAME" -c "cd '$SERVER' && bash '$script'"; then
+    failed_providers+=("$name")
+    echo "WARNING: $name runtime installation failed; continuing without it." >&2
+  fi
+}
+install_provider chatgpt providers/chatgpt/engine/install.sh
+install_provider deepseek providers/deepseek/engine/install.sh
+install_provider kimi providers/kimi/engine/install.sh
+install_provider antigravity providers/antigravity/engine/install.sh
 
 install -m 0644 "$SYSTEMD_DIR/webchatproxy.service" /etc/systemd/system/webchatproxy.service
 install -m 0644 "$SYSTEMD_DIR/webchatproxy-chatgpt-runtime.service" /etc/systemd/system/webchatproxy-chatgpt-runtime.service
@@ -56,6 +65,11 @@ if [ ! -s "$RUNTIME/antigravity-pool/.api-key" ]; then
 fi
 systemctl restart webchatproxy-antigravity-pool.service || true
 systemctl restart webchatproxy.service
+
+if ((${#failed_providers[@]})); then
+  echo "WARNING: unavailable providers: ${failed_providers[*]}" >&2
+  echo "Install their host prerequisites and rerun deploy.sh to enable them." >&2
+fi
 
 echo
 echo "WebChatProxy installed."

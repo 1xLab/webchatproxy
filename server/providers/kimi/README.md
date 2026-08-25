@@ -45,7 +45,9 @@ Both require `Authorization: Bearer <runtime/kimi/.api-key>`.
 
 ## Facade and native capabilities
 
-The WebChatProxy facade exposes models and chat only. It does not expose the native session controls through its OpenAI facade.
+The WebChatProxy facade currently exposes models and chat only. The authenticated
+Kimi Web runtime natively exposes projects, project chats and message history
+through Connect/JSON RPC under `/apiv2`.
 
 The upstream does expose session controls outside the OpenAI facade:
 
@@ -53,7 +55,34 @@ The upstream does expose session controls outside the OpenAI facade:
 - `POST /history` enables or disables stateful session mode.
 - `POST /new` starts a fresh session.
 
-These are native conversation/session controls. They are not a project list or queryable conversation-history API. Live validation of `/v1/projects` and `/v1/conversations` returning `404` describes the facade only, not the native Kimi capability.
+The Kimi Web project service is:
+
+```text
+POST /apiv2/kimi.gateway.project.v1.ProjectService/ListProjects
+POST /apiv2/kimi.gateway.project.v1.ProjectService/GetProject
+POST /apiv2/kimi.gateway.project.v1.ProjectService/CreateProject
+POST /apiv2/kimi.gateway.project.v1.ProjectService/UpdateProject
+POST /apiv2/kimi.gateway.project.v1.ProjectService/DeleteProject
+POST /apiv2/kimi.gateway.project.v1.ProjectService/ListProjectFiles
+POST /apiv2/kimi.gateway.project.v1.ProjectService/SetChatProject
+```
+
+Project conversations and history use:
+
+```text
+POST /apiv2/kimi.gateway.chat.v1.ChatService/ListChats
+POST /apiv2/kimi.gateway.chat.v1.ChatService/GetChat
+POST /apiv2/kimi.gateway.chat.v1.ChatService/ListMessages
+POST /apiv2/kimi.gateway.chat.v1.ChatService/ResumeChat
+POST /apiv2/kimi.gateway.chat.v1.ChatService/Chat
+```
+
+`ListChats` accepts `project_id`; `GetChat` returns `projectId`; and
+`ListMessages` returns the persisted message tree. These endpoints use the
+existing Kimi Web `access_token`/`refresh_token`, not a Moonshot API key.
+
+Live validation of `/v1/projects` and `/v1/conversations` returning `404`
+describes the facade only, not the native Kimi Web capability.
 
 ## Upstream audit notes
 

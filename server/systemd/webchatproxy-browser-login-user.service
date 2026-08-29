@@ -1,0 +1,21 @@
+[Unit]
+Description=WebChatProxy Browser Login Portal (user)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/agent/webchatproxy
+Environment=HOME=/home/agent
+Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=BROWSER_LOGIN_DISPLAY=100
+Environment=BROWSER_LOGIN_VNC_PORT=5900
+Environment=BROWSER_LOGIN_WEB_PORT=6080
+Environment=BROWSER_LOGIN_PROFILE=/home/agent/webchatproxy/browser-profile
+ExecStart=/bin/bash /home/agent/webchatproxy/server/browser-login/start.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
